@@ -607,6 +607,14 @@ function renderPathCell(path) {
   return safe;
 }
 
+function renderTitleCell(title, path) {
+  var safeTitle = escapeHtml(title || '');
+  if (shouldLinkify(path)) {
+    return '<a href="' + SITE_BASE_URL + escapeHtml(path) + '" target="_blank" rel="noopener noreferrer" class="page-link">' + safeTitle + '</a>';
+  }
+  return safeTitle;
+}
+
 function renderPagesTable(data) {
   if (!data || !data.length) return;
   document.getElementById('cardPages').style.display = '';
@@ -618,7 +626,7 @@ function renderPagesTable(data) {
     var tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + (i + 1) + '</td>' +
-      '<td>' + escapeHtml(d.pageTitle) + '</td>' +
+      '<td>' + renderTitleCell(d.pageTitle, d.pagePath) + '</td>' +
       '<td style="font-size:0.75rem;color:#888;">' + renderPathCell(d.pagePath) + '</td>' +
       '<td class="num">' + d.pageviews.toLocaleString() + '</td>' +
       '<td class="num">' + d.users.toLocaleString() + '</td>' +
