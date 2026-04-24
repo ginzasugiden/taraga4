@@ -4,3 +4,6 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# 作業指示メモ（公開リポジトリに入れない）
+[0-9][0-9][0-9].txt
