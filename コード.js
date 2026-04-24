@@ -36,7 +36,7 @@ const CONFIG = {
     AI_ANALYSIS_LOG: 'GA4_AI分析_ログ'
   },
 
-  GEMINI_MODEL: 'gemini-2.5-flash',
+  GEMINI_MODEL: 'gemini-2.0-flash',
   
   // コンバージョンイベント名（GA4で設定済みのもの）
   CONVERSION_EVENTS: [
@@ -790,7 +790,8 @@ function callGeminiAPI(prompt) {
     generationConfig: {
       temperature: 0.8,
       maxOutputTokens: 8192,
-      topP: 0.95
+      topP: 0.95,
+      topK: 40
     }
   };
 
@@ -814,7 +815,13 @@ function callGeminiAPI(prompt) {
     throw new Error('Gemini API 応答形式エラー: ' + body);
   }
 
-  return json.candidates[0].content.parts[0].text;
+  var candidate = json.candidates[0];
+  if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+    console.log('Gemini finishReason:', candidate.finishReason);
+    console.log('Gemini full response:', JSON.stringify(json).substring(0, 500));
+  }
+
+  return candidate.content.parts[0].text;
 }
 
 
