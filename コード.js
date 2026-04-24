@@ -686,41 +686,88 @@ function collectSummaryDataForAI() {
  */
 function buildAIPrompt(data) {
   var lines = [];
-  lines.push('あなたはGA4データからECサイトの売上改善提案を行うアナリストです。');
-  lines.push('対象サイト: TARA SISTER (tarasister.com) - スキンケア・化粧品のD2Cブランド (BASE使用)');
+
+  // ロール設定
+  lines.push('あなたはEC・D2Cマーケティングに10年以上の経験を持つデータアナリストです。');
+  lines.push('GA4データから具体的かつ実践的な売上改善提案を行うプロフェッショナルとして、経営判断に直結する分析レポートを作成してください。');
   lines.push('');
-  lines.push('以下はこのサイトの過去30日のGA4データです。客観的かつ実践的に分析してください。');
+
+  // コンテキスト
+  lines.push('## 対象サイトの基本情報');
+  lines.push('- ブランド名: TARA SISTER');
+  lines.push('- URL: https://www.tarasister.com');
+  lines.push('- 業態: スキンケア・化粧品のD2Cブランド（BASEで構築）');
+  lines.push('- 特徴: 自然派志向、コンセプトストーリー重視、リピート購入が売上の柱');
+  lines.push('- 想定顧客: 肌に気を使う30-50代女性');
+  lines.push('- 主要商品: Cleansing Massage Oil (クレンジングオイル)、Body wash DANA、Mary care oil など');
   lines.push('');
-  lines.push('## 日別サマリ (列: 日付/ユーザー/セッション/PV/CV)');
+
+  lines.push('## 分析対象データ（過去30日）');
+  lines.push('');
+  lines.push('### 日別サマリ (日付 / ユーザー / セッション / PV / CV)');
   data.daily.forEach(function(row) { lines.push(row.join('\t')); });
   lines.push('');
-  lines.push('## ページ別TOP20 (列: タイトル/パス/PV/ユーザー/滞在秒/直帰率)');
+  lines.push('### ページ別TOP20 (タイトル / パス / PV / ユーザー / 滞在秒 / 直帰率)');
   data.pages.forEach(function(row) { lines.push(row.join('\t')); });
   lines.push('');
-  lines.push('## 集客チャネル別');
+  lines.push('### 集客チャネル別');
   data.channels.forEach(function(row) { lines.push(row.join('\t')); });
   lines.push('');
-  lines.push('## コンバージョン');
+  lines.push('### コンバージョンイベント');
   data.conversions.forEach(function(row) { lines.push(row.join('\t')); });
   lines.push('');
-  lines.push('## 以下の形式で出力してください (Markdown、800-1200文字程度、日本語):');
+
+  // 出力指示
+  lines.push('## 出力指示');
+  lines.push('');
+  lines.push('以下の7セクションで構成された分析レポートを、Markdown形式・日本語で作成してください。');
+  lines.push('全体で2500-3500文字程度を目安に、具体的な数値と根拠を伴う実践的な内容にしてください。');
   lines.push('');
   lines.push('### 📈 今週のトレンド');
-  lines.push('(データから読み取れる直近のアクセス傾向・急増急減・曜日特性など)');
+  lines.push('- 過去30日の数値の推移、急増急減したポイント、曜日傾向を指摘');
+  lines.push('- 直近7日と前週を比較して、改善/悪化している指標を明示');
+  lines.push('- 具体的な日付と数値を引用');
   lines.push('');
-  lines.push('### 🎯 注目すべきページ・コンテンツ');
-  lines.push('(PVが多い/滞在時間が長い/直帰率が低いなど好調なページと、その理由の推測)');
+  lines.push('### 🎯 注目すべきコンテンツ');
+  lines.push('- PV/ユーザー/滞在時間/直帰率のバランスから、真に好調なページを特定');
+  lines.push('- なぜそのページが読まれているのか、コンテンツの特性から仮説を立てる');
+  lines.push('- 他ページへの横展開アイデア');
   lines.push('');
   lines.push('### ⚠️ 改善が必要なページ');
-  lines.push('(直帰率が高い/滞在時間が短いなど問題のあるページ、改善案)');
+  lines.push('- 直帰率が高い/滞在時間が短い/ユーザー数の割にPVが少ないページを指摘');
+  lines.push('- 各ページに対して具体的な改善案を1つ以上（見出し改善、画像追加、CTA配置、関連商品リンク、等）');
+  lines.push('- 優先度を 高/中/低 で明示');
   lines.push('');
-  lines.push('### 📊 転換率 (CVR) の状況');
-  lines.push('(全体CVR、チャネル別CVRの差、どこに注力すべきか)');
+  lines.push('### 🚪 集客チャネル分析');
+  lines.push('- 流入チャネル別のセッション数・割合');
+  lines.push('- 各チャネルの強み・弱み（自然流入依存か広告依存か、持続性はどうか）');
+  lines.push('- 投資すべきチャネル、縮小してよいチャネル');
   lines.push('');
-  lines.push('### 💡 次の1週間でやるべき具体的アクション3つ');
-  lines.push('(優先順に、実行可能な具体策を3つ)');
+  lines.push('### 📊 転換率 (CVR) の詳細分析');
+  lines.push('- 全体CVRの算出: (CV数 ÷ ユーザー数) × 100 を計算して%で表示');
+  lines.push('- ECサイトの業界平均（1-2%程度）との比較');
+  lines.push('- CVRを上げるために、今のサイトで最も効果が見込める改善点を2-3個');
+  lines.push('- ファネル（認知→閲覧→カート→購入）のどこで離脱しているかの推測');
   lines.push('');
-  lines.push('※ 数値は元データから正確に引用すること。推測はその旨明記すること。');
+  lines.push('### 💡 優先度付き改善アクション');
+  lines.push('以下の3つの時間軸で、実行可能な具体アクションを提示:');
+  lines.push('- **今週中に着手**: 即効性◎、工数小（例: タイトル改善、ボタン配置変更）');
+  lines.push('- **今月中に実施**: 効果○、工数中（例: 人気商品のLP強化、FAQ追加）');
+  lines.push('- **3ヶ月スパン**: 効果◎、工数大（例: リピート施策、メール自動化、Instagram運用強化）');
+  lines.push('各アクションに「なぜこれが効くのか」の根拠を付けること');
+  lines.push('');
+  lines.push('### 🔍 次回チェックすべき定点観測指標');
+  lines.push('- 今回特定した課題に対して、翌週/翌月に見るべき指標を3-5個');
+  lines.push('- 「この数字がこう変化したら施策成功」の基準値');
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+  lines.push('【厳守ルール】');
+  lines.push('- 数値は必ず元データから正確に引用する（計算した数値には "(独自算出)" と付記）');
+  lines.push('- 推測や仮説には「〜と思われる」「〜の可能性がある」を付けて事実と区別する');
+  lines.push('- 具体例・具体策のない抽象的な助言は避ける');
+  lines.push('- 「頑張りましょう」「期待しています」のような情緒表現は一切使わない');
+  lines.push('- 経営判断に資する客観的・定量的なレポートにする');
 
   return lines.join('\n');
 }
@@ -741,8 +788,9 @@ function callGeminiAPI(prompt) {
       parts: [{ text: prompt }]
     }],
     generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 2048
+      temperature: 0.8,
+      maxOutputTokens: 8192,
+      topP: 0.95
     }
   };
 

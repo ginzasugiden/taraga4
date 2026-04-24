@@ -323,12 +323,12 @@
 
   <!-- AI分析 -->
   <section class="card" id="cardAI" style="display:none;">
-    <h2><span class="icon">🤖</span> AI分析レポート</h2>
+    <h2><span class="icon">🤖</span> 本日の分析レポート</h2>
     <div class="hint" id="aiHelper">
-      Gemini APIで今日のデータを分析します。1日1回生成したあとはキャッシュが返されます（無駄なAPI呼び出しなし）。
+      本日のサイトデータをAIが分析し、売上改善の提案を行います。1日1回更新され、再アクセス時も同日の分析結果をご確認いただけます。
     </div>
     <div style="margin: 12px 0;">
-      <button id="btnAI" class="btn-primary">本日のAI分析を取得</button>
+      <button id="btnAI" class="btn-primary">本日の分析レポートを表示</button>
       <span id="aiStatus" style="margin-left: 12px; font-size: 0.9em; color: #888;"></span>
     </div>
     <div id="aiContent" style="display:none; padding: 16px; background: var(--primary-light); border-radius: 8px; line-height: 1.8;"></div>
@@ -728,8 +728,7 @@ function fetchAIAnalysis() {
       } else {
         var t = data.generatedAt ? new Date(data.generatedAt) : new Date();
         var timeStr = t.toLocaleString('ja-JP');
-        var cachedMark = data.cached ? '（キャッシュ）' : '（新規生成）';
-        status.textContent = '最終生成: ' + timeStr + ' ' + cachedMark;
+        status.textContent = '最終更新: ' + timeStr;
         status.style.color = '#888';
         content.innerHTML = renderMarkdown(data.analysis || '');
         content.style.display = 'block';
@@ -744,14 +743,34 @@ function fetchAIAnalysis() {
     });
 }
 
-// シンプルなMarkdown → HTML変換
+// Markdown → HTML変換（見出し・箇条書き・水平線対応）
 function renderMarkdown(md) {
   var html = escapeHtml(md);
-  html = html.replace(/^### (.+)$/gm, '<h3 style="color: var(--accent-dark); margin-top: 16px;">$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2 style="color: var(--primary-dark);">$1</h2>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\n\n/g, '</p><p>');
-  html = '<p>' + html + '</p>';
+
+  // 見出し
+  html = html.replace(/^### (.+)$/gm, '<h3 style="color: var(--accent-dark); margin-top: 20px; margin-bottom: 10px; border-left: 4px solid var(--primary); padding-left: 10px;">$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2 style="color: var(--primary-dark); margin-top: 24px; margin-bottom: 12px;">$1</h2>');
+
+  // 太字
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color: var(--primary-dark);">$1</strong>');
+
+  // 水平線
+  html = html.replace(/^---$/gm, '<hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">');
+
+  // 箇条書き（- で始まる行）
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
+    return '<ul style="margin: 8px 0 8px 20px; padding-left: 8px;">' + match + '</ul>';
+  });
+
+  // 段落
+  html = html.split('\n\n').map(function(para) {
+    if (para.trim().startsWith('<h') || para.trim().startsWith('<ul') || para.trim().startsWith('<hr')) {
+      return para;
+    }
+    return para.trim() ? '<p style="margin: 10px 0;">' + para + '</p>' : '';
+  }).join('\n');
+
   return html;
 }
 
