@@ -163,10 +163,14 @@
   tbody tr:hover { background: var(--accent-light); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .page-link {
-    color: var(--accent-dark);
+    color: var(--accent-dark) !important;
     text-decoration: none;
+    font-weight: 500;
   }
-  .page-link:hover { text-decoration: underline; }
+  .page-link:hover {
+    text-decoration: underline;
+    color: var(--primary-dark) !important;
+  }
 
   /* レスポンシブ */
   @media (max-width: 600px) {
