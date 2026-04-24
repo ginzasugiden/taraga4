@@ -170,9 +170,76 @@
     .kpi-row { grid-template-columns: repeat(2, 1fr); }
     .chart-wrap { max-height: 300px; }
   }
+
+  /* 認証オーバーレイ */
+  #auth-overlay {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 16px;
+  }
+  .auth-box {
+    background: var(--card-bg);
+    border-radius: 16px;
+    padding: 32px 24px;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+    text-align: center;
+  }
+  .auth-box h2 {
+    color: var(--primary-dark);
+    font-size: 1.05rem;
+    margin-bottom: 20px;
+    line-height: 1.4;
+  }
+  .auth-box input[type="password"] {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 1rem;
+    margin-bottom: 12px;
+    font-family: inherit;
+  }
+  .auth-box button {
+    width: 100%;
+    background: var(--primary-dark);
+    color: #fff;
+    border: none;
+    padding: 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: opacity 0.2s;
+  }
+  .auth-box button:hover { opacity: 0.85; }
+  .auth-error {
+    color: #a04545;
+    font-size: 0.85rem;
+    margin-top: 10px;
+    min-height: 1em;
+  }
 </style>
 </head>
 <body>
+
+<!-- 認証オーバーレイ -->
+<div id="auth-overlay">
+  <div class="auth-box">
+    <h2>TARA SISTER アクセス解析ダッシュボード</h2>
+    <form id="auth-form" onsubmit="return doLogin(event)">
+      <input type="password" id="auth-pw" placeholder="パスワード" autocomplete="current-password" autofocus>
+      <button type="submit">ログイン</button>
+    </form>
+    <div id="auth-error" class="auth-error"></div>
+  </div>
+</div>
 
 <header>
   <h1>TARA SISTER アクセス解析ダッシュボード</h1>
@@ -181,12 +248,10 @@
 
 <div class="container">
 
-  <!-- 設定 -->
+  <!-- 操作バー -->
   <div class="config-bar">
-    <label for="gasUrl">GAS WebアプリURL:</label>
-    <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/xxxxx/exec">
-    <button id="btnLoad" onclick="loadAll()">データ取得</button>
-    <button onclick="saveConfig()" style="background:var(--accent-dark)">URL保存</button>
+    <button id="btnLoad" onclick="loadAll()">データを更新</button>
+    <button onclick="logout()" style="background:var(--accent-dark)">ログアウト</button>
   </div>
 
   <div id="status" class="status"></div>
@@ -266,27 +331,42 @@
 
 <script>
 // ============================
-// Config
+// Config & Auth
 // ============================
-const LS_KEY = 'tarasister_gas_url';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwHq9DUD0g-wV3E2tDNrv3g3BI3cveQLrTbXTH7RI3SPxk7r0_tHuBXN55MW9OH2LJUCw/exec';
+const AUTH_PASSWORD = 'tara2018';
+const AUTH_STORAGE_KEY = 'tara_authed';
 
 window.addEventListener('DOMContentLoaded', function() {
-  var saved = localStorage.getItem(LS_KEY);
-  if (saved) {
-    document.getElementById('gasUrl').value = saved;
+  if (sessionStorage.getItem(AUTH_STORAGE_KEY) === '1') {
+    hideAuthOverlay();
     loadAll();
   }
 });
 
-function saveConfig() {
-  var url = document.getElementById('gasUrl').value.trim();
-  if (!url) return;
-  localStorage.setItem(LS_KEY, url);
-  showStatus('URL を保存しました', false);
+function doLogin(e) {
+  e.preventDefault();
+  var pw = document.getElementById('auth-pw').value;
+  var err = document.getElementById('auth-error');
+  if (pw === AUTH_PASSWORD) {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, '1');
+    err.textContent = '';
+    hideAuthOverlay();
+    loadAll();
+  } else {
+    err.textContent = 'パスワードが違います';
+  }
+  return false;
 }
 
-function getBaseUrl() {
-  return document.getElementById('gasUrl').value.trim();
+function hideAuthOverlay() {
+  var el = document.getElementById('auth-overlay');
+  if (el) el.style.display = 'none';
+}
+
+function logout() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  location.reload();
 }
 
 // ============================
@@ -297,19 +377,16 @@ var chartChannels = null;
 var chartConversions = null;
 
 async function loadAll() {
-  var base = getBaseUrl();
-  if (!base) { showStatus('GAS WebアプリURLを入力してください', true); return; }
-
   var btn = document.getElementById('btnLoad');
   btn.disabled = true;
   showStatus('データを取得中...', false);
 
   try {
     var [daily, pages, channels, conversions] = await Promise.all([
-      fetchData(base, 'daily'),
-      fetchData(base, 'pages'),
-      fetchData(base, 'channels'),
-      fetchData(base, 'conversions')
+      fetchData('daily'),
+      fetchData('pages'),
+      fetchData('channels'),
+      fetchData('conversions')
     ]);
 
     if (daily.error || pages.error || channels.error || conversions.error) {
@@ -332,9 +409,9 @@ async function loadAll() {
   btn.disabled = false;
 }
 
-async function fetchData(base, type) {
-  var sep = base.indexOf('?') === -1 ? '?' : '&';
-  var res = await fetch(base + sep + 'type=' + type);
+async function fetchData(type) {
+  var sep = GAS_URL.indexOf('?') === -1 ? '?' : '&';
+  var res = await fetch(GAS_URL + sep + 'type=' + type);
   return res.json();
 }
 
@@ -428,17 +505,45 @@ var CHANNEL_COLORS = [
   '#e8e0d2','#bfae93','#3d342a','#857058'
 ];
 
+var CHANNEL_NAME_MAP = {
+  'Direct': '直接アクセス',
+  'Organic Search': '検索エンジン（自然検索）',
+  'Organic Social': 'SNS（自然流入）',
+  'Referral': '他サイトからのリンク',
+  'Paid Search': '検索広告',
+  'Paid Social': 'SNS広告',
+  'Email': 'メール',
+  'Affiliates': 'アフィリエイト',
+  'Display': 'ディスプレイ広告',
+  'Cross-network': 'クロスネットワーク広告',
+  'Unassigned': '未分類',
+  'Organic Shopping': 'ショッピング（自然）',
+  'Paid Shopping': 'ショッピング広告',
+  'Organic Video': '動画（自然）',
+  'Paid Video': '動画広告',
+  'Video': '動画',
+  'Audio': '音声',
+  'SMS': 'SMS',
+  'Mobile Push Notifications': 'プッシュ通知',
+  'Paid Other': 'その他の広告',
+  '(not set)': '（未設定）'
+};
+
+function translateChannel(name) {
+  return CHANNEL_NAME_MAP[name] || name;
+}
+
 function renderChannelsChart(data) {
   if (!data || !data.length) return;
   document.getElementById('cardChannels').style.display = '';
 
-  // チャネルグループ単位で集計
+  // チャネルグループ単位で集計（キーは英語のまま保持）
   var map = {};
   data.forEach(function(d) {
     map[d.channel] = (map[d.channel] || 0) + d.sessions;
   });
   var entries = Object.entries(map).sort(function(a, b) { return b[1] - a[1]; });
-  var labels = entries.map(function(e) { return e[0]; });
+  var labels = entries.map(function(e) { return translateChannel(e[0]); });
   var values = entries.map(function(e) { return e[1]; });
 
   if (chartChannels) chartChannels.destroy();
