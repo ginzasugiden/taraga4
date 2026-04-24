@@ -234,6 +234,90 @@
     margin-top: 10px;
     min-height: 1em;
   }
+
+  /* Markdown レンダリング用スタイル */
+  .md-h1 {
+    color: var(--primary-dark);
+    margin: 24px 0 12px;
+    font-size: 1.4em;
+    font-weight: 700;
+  }
+  .md-h2 {
+    color: var(--primary-dark);
+    margin: 22px 0 10px;
+    font-size: 1.25em;
+    font-weight: 700;
+  }
+  .md-h3 {
+    color: var(--accent-dark);
+    margin: 18px 0 8px;
+    font-size: 1.1em;
+    border-left: 4px solid var(--primary);
+    padding-left: 10px;
+    font-weight: 700;
+  }
+  .md-strong { color: var(--primary-dark); font-weight: 700; }
+  .md-p { margin: 8px 0; line-height: 1.8; }
+  .md-ul, .md-ol { margin: 8px 0 8px 24px; padding-left: 8px; }
+  .md-ul li, .md-ol li { margin: 4px 0; line-height: 1.7; }
+  .md-hr { margin: 16px 0; border: none; border-top: 1px solid var(--border); }
+  .md-code {
+    background: var(--primary-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: 'SFMono-Regular', Consolas, 'Courier New', monospace;
+  }
+
+  /* Markdown テーブル */
+  .md-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.92em;
+    background: white;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+  .md-table thead {
+    background: var(--primary);
+    color: white;
+  }
+  .md-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--primary-dark);
+  }
+  .md-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    line-height: 1.6;
+  }
+  .md-table tbody tr:nth-child(odd) {
+    background: var(--primary-light);
+  }
+  .md-table tbody tr:hover {
+    background: var(--accent-light);
+  }
+  .md-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .md-table td br { display: block; }
+
+  @media (max-width: 768px) {
+    .md-table {
+      font-size: 0.85em;
+      display: block;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .md-table th, .md-table td {
+      padding: 8px 10px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -743,35 +827,162 @@ function fetchAIAnalysis() {
     });
 }
 
-// Markdown → HTML変換（見出し・箇条書き・水平線対応）
+// Markdown → HTML変換（見出し・箇条書き・水平線・テーブル対応）
 function renderMarkdown(md) {
-  var html = escapeHtml(md);
+  if (!md) return '';
 
-  // 見出し
-  html = html.replace(/^### (.+)$/gm, '<h3 style="color: var(--accent-dark); margin-top: 20px; margin-bottom: 10px; border-left: 4px solid var(--primary); padding-left: 10px;">$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2 style="color: var(--primary-dark); margin-top: 24px; margin-bottom: 12px;">$1</h2>');
+  // 改行正規化
+  var text = String(md).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-  // 太字
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color: var(--primary-dark);">$1</strong>');
+  // HTMLエスケープ（テーブル処理前に行う）
+  text = escapeHtml(text);
 
-  // 水平線
-  html = html.replace(/^---$/gm, '<hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">');
+  var lines = text.split('\n');
+  var output = [];
+  var i = 0;
 
-  // 箇条書き（- で始まる行）
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
-    return '<ul style="margin: 8px 0 8px 20px; padding-left: 8px;">' + match + '</ul>';
-  });
+  while (i < lines.length) {
+    var line = lines[i];
+    var trimmed = line.trim();
 
-  // 段落
-  html = html.split('\n\n').map(function(para) {
-    if (para.trim().startsWith('<h') || para.trim().startsWith('<ul') || para.trim().startsWith('<hr')) {
-      return para;
+    // ========== Markdownテーブル検出 ==========
+    if (/^\|.*\|$/.test(trimmed) && i + 1 < lines.length) {
+      var sepLine = lines[i + 1].trim();
+      if (/^\|\s*[-:]+[\s|:-]*\|$/.test(sepLine)) {
+        var headerCells = parseTableRow(trimmed);
+        var tableHtml = ['<table class="md-table">'];
+        tableHtml.push('<thead><tr>');
+        headerCells.forEach(function(c) {
+          tableHtml.push('<th>' + c + '</th>');
+        });
+        tableHtml.push('</tr></thead>');
+        tableHtml.push('<tbody>');
+
+        i += 2;
+
+        while (i < lines.length) {
+          var dataLine = lines[i].trim();
+          if (!/^\|.*\|$/.test(dataLine)) break;
+          var dataCells = parseTableRow(dataLine);
+          tableHtml.push('<tr>');
+          dataCells.forEach(function(c) {
+            tableHtml.push('<td>' + c + '</td>');
+          });
+          tableHtml.push('</tr>');
+          i++;
+        }
+
+        tableHtml.push('</tbody></table>');
+        output.push(tableHtml.join(''));
+        continue;
+      }
     }
-    return para.trim() ? '<p style="margin: 10px 0;">' + para + '</p>' : '';
-  }).join('\n');
 
-  return html;
+    // ========== 見出し ==========
+    var h3 = trimmed.match(/^###\s+(.+)$/);
+    if (h3) {
+      output.push('<h3 class="md-h3">' + h3[1] + '</h3>');
+      i++;
+      continue;
+    }
+    var h2 = trimmed.match(/^##\s+(.+)$/);
+    if (h2) {
+      output.push('<h2 class="md-h2">' + h2[1] + '</h2>');
+      i++;
+      continue;
+    }
+    var h1 = trimmed.match(/^#\s+(.+)$/);
+    if (h1) {
+      output.push('<h1 class="md-h1">' + h1[1] + '</h1>');
+      i++;
+      continue;
+    }
+
+    // ========== 水平線 ==========
+    if (/^-{3,}$/.test(trimmed) || /^={3,}$/.test(trimmed)) {
+      output.push('<hr class="md-hr">');
+      i++;
+      continue;
+    }
+
+    // ========== 空行 ==========
+    if (trimmed === '') {
+      i++;
+      continue;
+    }
+
+    // ========== 箇条書き (- または * で始まる) ==========
+    if (/^[-*]\s+/.test(trimmed)) {
+      var listItems = [];
+      while (i < lines.length) {
+        var t = lines[i].trim();
+        var m = t.match(/^[-*]\s+(.+)$/);
+        if (m) {
+          listItems.push('<li>' + processInline(m[1]) + '</li>');
+          i++;
+        } else if (t === '') {
+          i++;
+          break;
+        } else {
+          break;
+        }
+      }
+      output.push('<ul class="md-ul">' + listItems.join('') + '</ul>');
+      continue;
+    }
+
+    // ========== 番号付きリスト ==========
+    if (/^\d+\.\s+/.test(trimmed)) {
+      var olItems = [];
+      while (i < lines.length) {
+        var t2 = lines[i].trim();
+        var m2 = t2.match(/^\d+\.\s+(.+)$/);
+        if (m2) {
+          olItems.push('<li>' + processInline(m2[1]) + '</li>');
+          i++;
+        } else if (t2 === '') {
+          i++;
+          break;
+        } else {
+          break;
+        }
+      }
+      output.push('<ol class="md-ol">' + olItems.join('') + '</ol>');
+      continue;
+    }
+
+    // ========== 通常の段落 ==========
+    var paragraphLines = [];
+    while (i < lines.length) {
+      var pt = lines[i].trim();
+      if (pt === '') { i++; break; }
+      if (/^(#{1,6}\s|[-*]\s|\d+\.\s|\|)/.test(pt) || /^-{3,}$/.test(pt)) break;
+      paragraphLines.push(lines[i]);
+      i++;
+    }
+    if (paragraphLines.length > 0) {
+      output.push('<p class="md-p">' + processInline(paragraphLines.join('<br>')) + '</p>');
+    }
+  }
+
+  return output.join('\n');
+}
+
+// テーブル行をセル配列に分解
+function parseTableRow(line) {
+  var inner = line.replace(/^\|/, '').replace(/\|$/, '');
+  return inner.split('|').map(function(c) {
+    return processInline(c.trim());
+  });
+}
+
+// インライン要素（太字、斜体、コード）を処理
+function processInline(text) {
+  if (!text) return '';
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="md-strong">$1</strong>');
+  text = text.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  text = text.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
+  return text;
 }
 
 document.getElementById('btnAI').addEventListener('click', fetchAIAnalysis);
