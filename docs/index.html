@@ -162,6 +162,11 @@
   }
   tbody tr:hover { background: var(--accent-light); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .page-link {
+    color: var(--accent-dark);
+    text-decoration: none;
+  }
+  .page-link:hover { text-decoration: underline; }
 
   /* レスポンシブ */
   @media (max-width: 600px) {
@@ -334,6 +339,7 @@
 // Config & Auth
 // ============================
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwHq9DUD0g-wV3E2tDNrv3g3BI3cveQLrTbXTH7RI3SPxk7r0_tHuBXN55MW9OH2LJUCw/exec';
+const SITE_BASE_URL = 'https://www.tarasister.com';
 const AUTH_PASSWORD = 'tara2018';
 const AUTH_STORAGE_KEY = 'tara_authed';
 
@@ -580,6 +586,23 @@ function renderChannelsChart(data) {
 // ============================
 // ページ別テーブル
 // ============================
+function shouldLinkify(path) {
+  if (!path || path === '(not set)') return false;
+  if (path.startsWith('/shops/')) return false;
+  if (path.includes('/checkout')) return false;
+  if (path.includes('/cart')) return false;
+  if (path.includes('/edit')) return false;
+  return true;
+}
+
+function renderPathCell(path) {
+  var safe = escapeHtml(path);
+  if (shouldLinkify(path)) {
+    return '<a href="' + SITE_BASE_URL + safe + '" target="_blank" rel="noopener noreferrer" class="page-link">' + safe + '</a>';
+  }
+  return safe;
+}
+
 function renderPagesTable(data) {
   if (!data || !data.length) return;
   document.getElementById('cardPages').style.display = '';
@@ -592,7 +615,7 @@ function renderPagesTable(data) {
     tr.innerHTML =
       '<td>' + (i + 1) + '</td>' +
       '<td>' + escapeHtml(d.pageTitle) + '</td>' +
-      '<td style="font-size:0.75rem;color:#888;">' + escapeHtml(d.pagePath) + '</td>' +
+      '<td style="font-size:0.75rem;color:#888;">' + renderPathCell(d.pagePath) + '</td>' +
       '<td class="num">' + d.pageviews.toLocaleString() + '</td>' +
       '<td class="num">' + d.users.toLocaleString() + '</td>' +
       '<td class="num">' + d.avgDuration + '</td>' +
