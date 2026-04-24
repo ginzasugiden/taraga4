@@ -31,10 +31,11 @@ const CONFIG = {
     DAILY_SUMMARY: 'GA4_日別サマリ',
     PAGE_REPORT: 'GA4_ページ別',
     CHANNEL_REPORT: 'GA4_集客チャネル別',
-    CONVERSION_REPORT: 'GA4_コンバージョン別'
+    CONVERSION_REPORT: 'GA4_コンバージョン別',
+    AI_ANALYSIS: 'GA4_AI分析',
+    AI_ANALYSIS_LOG: 'GA4_AI分析_ログ'
   },
 
-  AI_ANALYSIS_SHEET: 'GA4_AI分析',
   GEMINI_MODEL: 'gemini-2.5-flash',
   
   // コンバージョンイベント名（GA4で設定済みのもの）
@@ -516,11 +517,13 @@ function appendDailySummary() {
 // AI分析（Gemini API）
 // ============================================
 /**
- * 本日のAI分析を取得。キャッシュがあればそれを返し、無ければ生成して保存
+ * 本日のAI分析を取得。キャッシュがあればそれを返し、無ければ生成して保存。
+ * 呼び出しごとに実行ログシート (GA4_AI分析_ログ) に1行追記する。
  */
 function getOrGenerateAIAnalysis() {
-  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
-  var sheet = getOrCreateSheet(CONFIG.AI_ANALYSIS_SHEET);
+  var startedAt = new Date();
+  var today = Utilities.formatDate(startedAt, 'Asia/Tokyo', 'yyyy-MM-dd');
+  var sheet = getOrCreateSheet(CONFIG.SHEETS.AI_ANALYSIS);
 
   // ヘッダー初期化
   if (sheet.getLastRow() === 0) {
@@ -529,7 +532,8 @@ function getOrGenerateAIAnalysis() {
     sheet.setFrozenRows(1);
   }
 
-  // 今日の分析が既にあるか確認
+  // 今日のキャッシュがあるか確認
+  var cachedRow = null;
   if (sheet.getLastRow() >= 2) {
     var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
     for (var i = 0; i < data.length; i++) {
@@ -538,30 +542,108 @@ function getOrGenerateAIAnalysis() {
         ? Utilities.formatDate(cellDate, 'Asia/Tokyo', 'yyyy-MM-dd')
         : String(cellDate);
       if (dateStr === today) {
-        return {
-          cached: true,
-          date: today,
-          generatedAt: data[i][1],
-          analysis: data[i][2]
-        };
+        cachedRow = data[i];
+        break;
       }
     }
   }
 
-  // キャッシュなし → Gemini API 呼び出し
-  var summaryData = collectSummaryDataForAI();
-  var prompt = buildAIPrompt(summaryData);
-  var analysis = callGeminiAPI(prompt);
+  try {
+    if (cachedRow) {
+      var cachedResult = {
+        cached: true,
+        date: today,
+        generatedAt: cachedRow[1],
+        analysis: cachedRow[2]
+      };
+      appendAIAnalysisLog({
+        timestamp: new Date(),
+        kind: 'キャッシュ返却',
+        targetDate: today,
+        elapsedMs: new Date().getTime() - startedAt.getTime(),
+        summary: truncateForLog(cachedRow[2])
+      });
+      return cachedResult;
+    }
 
-  var now = new Date();
-  sheet.appendRow([today, now, analysis]);
+    // 新規生成
+    var summaryData = collectSummaryDataForAI();
+    var prompt = buildAIPrompt(summaryData);
+    var analysis = callGeminiAPI(prompt);
 
-  return {
-    cached: false,
-    date: today,
-    generatedAt: now,
-    analysis: analysis
-  };
+    var now = new Date();
+    sheet.appendRow([today, now, analysis]);
+
+    appendAIAnalysisLog({
+      timestamp: now,
+      kind: '新規生成',
+      targetDate: today,
+      elapsedMs: now.getTime() - startedAt.getTime(),
+      summary: truncateForLog(analysis)
+    });
+
+    return {
+      cached: false,
+      date: today,
+      generatedAt: now,
+      analysis: analysis
+    };
+
+  } catch (e) {
+    try {
+      appendAIAnalysisLog({
+        timestamp: new Date(),
+        kind: 'エラー',
+        targetDate: today,
+        elapsedMs: new Date().getTime() - startedAt.getTime(),
+        summary: String(e && e.message ? e.message : e).substring(0, 120)
+      });
+    } catch (logErr) {
+      // ログ書き込み失敗は握りつぶす（本エラーを優先）
+    }
+    throw e;
+  }
+}
+
+/**
+ * AI分析の実行ログを GA4_AI分析_ログ シートに1行追記
+ */
+function appendAIAnalysisLog(logRow) {
+  var sheet = getOrCreateSheet(CONFIG.SHEETS.AI_ANALYSIS_LOG);
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 5).setValues([[
+      'タイムスタンプ',
+      '実行種別',
+      '対象日付',
+      '処理時間(ms)',
+      '分析内容サマリ(冒頭120文字)'
+    ]]);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidth(1, 160);
+    sheet.setColumnWidth(2, 90);
+    sheet.setColumnWidth(3, 100);
+    sheet.setColumnWidth(4, 100);
+    sheet.setColumnWidth(5, 600);
+  }
+
+  sheet.appendRow([
+    logRow.timestamp,
+    logRow.kind,
+    logRow.targetDate,
+    logRow.elapsedMs,
+    logRow.summary
+  ]);
+}
+
+/**
+ * ログ用に文字列を整形（空白圧縮 + 120文字で切り詰め）
+ */
+function truncateForLog(text) {
+  if (!text) return '';
+  var s = String(text).replace(/\s+/g, ' ').trim();
+  return s.length > 120 ? s.substring(0, 120) + '...' : s;
 }
 
 /**
