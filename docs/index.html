@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TARA SISTER アクセス解析ダッシュボード</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --primary-light: #e8e0d2;
+    --primary: #b8a283;
+    --primary-dark: #6b5b47;
+    --accent-light: #ede4d3;
+    --accent: #a89683;
+    --accent-dark: #5d4e3c;
+    --bg: #faf8f5;
+    --text: #3d342a;
+    --card-bg: #ffffff;
+    --border: #e8e0d2;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  header {
+    background: linear-gradient(135deg, var(--primary-dark) 0%, var(--accent) 100%);
+    color: #fff;
+    padding: 24px 16px;
+    text-align: center;
+  }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header p { font-size: 0.85rem; opacity: 0.9; margin-top: 4px; }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  /* 設定バー */
+  .config-bar {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .config-bar label { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+  .config-bar input[type="text"] {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+  .config-bar button {
+    background: var(--primary-dark);
+    color: #fff;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity 0.2s;
+  }
+  .config-bar button:hover { opacity: 0.85; }
+  .config-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ステータス */
+  .status {
+    text-align: center;
+    padding: 12px;
+    font-size: 0.85rem;
+    color: #888;
+  }
+  .status.error { color: #a04545; }
+
+  /* カード */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .card h2 {
+    font-size: 1.1rem;
+    margin-bottom: 6px;
+    color: var(--primary-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .icon { font-size: 1.3rem; }
+  .card .hint {
+    background: var(--accent-light);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin-bottom: 16px;
+    font-size: 0.8rem;
+    color: var(--accent-dark);
+    border-radius: 0 8px 8px 0;
+  }
+
+  /* KPI */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .kpi-box {
+    background: linear-gradient(135deg, var(--primary-light), #fff);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+  }
+  .kpi-box .kpi-value { font-size: 1.5rem; font-weight: 700; color: var(--primary-dark); }
+  .kpi-box .kpi-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+
+  /* チャートコンテナ */
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    max-height: 400px;
+  }
+  .chart-wrap canvas { width: 100% !important; }
+
+  /* テーブル */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  thead th {
+    background: var(--primary-light);
+    padding: 10px 8px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+  }
+  tbody td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:hover { background: var(--accent-light); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* レスポンシブ */
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.1rem; }
+    .card { padding: 14px; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .chart-wrap { max-height: 300px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TARA SISTER アクセス解析ダッシュボード</h1>
+  <p>GA4データをリアルタイムで可視化（過去30日間）</p>
+</header>
+
+<div class="container">
+
+  <!-- 設定 -->
+  <div class="config-bar">
+    <label for="gasUrl">GAS WebアプリURL:</label>
+    <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/xxxxx/exec">
+    <button id="btnLoad" onclick="loadAll()">データ取得</button>
+    <button onclick="saveConfig()" style="background:var(--accent-dark)">URL保存</button>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <!-- KPI -->
+  <div class="kpi-row" id="kpiRow" style="display:none;">
+    <div class="kpi-box"><div class="kpi-value" id="kpiUsers">-</div><div class="kpi-label">ユーザー数（合計）</div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiSessions">-</div><div class="kpi-label">セッション数</div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiPV">-</div><div class="kpi-label">ページビュー</div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiCV">-</div><div class="kpi-label">コンバージョン</div></div>
+  </div>
+
+  <!-- 日別サマリ -->
+  <div class="card" id="cardDaily" style="display:none;">
+    <h2><span class="icon">📈</span> 日別アクセス推移</h2>
+    <div class="hint">
+      <strong>このグラフの見方：</strong>横軸が日付、縦軸がそれぞれの数値です。
+      折れ線が右肩上がりならアクセスが増加傾向です。
+      週末や祝日にどう変化するかもチェックしてみましょう。
+    </div>
+    <div class="chart-wrap"><canvas id="chartDaily"></canvas></div>
+  </div>
+
+  <!-- 集客チャネル -->
+  <div class="card" id="cardChannels" style="display:none;">
+    <h2><span class="icon">🥧</span> 集客チャネル別セッション</h2>
+    <div class="hint">
+      <strong>このグラフの見方：</strong>お客様がどこからサイトに来ているかを示します。
+      「Organic Search」は検索エンジン、「Direct」はURL直接入力やブックマーク、
+      「Social」はSNSからの流入です。大きい割合のチャネルが主な集客源です。
+    </div>
+    <div class="chart-wrap" style="max-width:450px;margin:0 auto;"><canvas id="chartChannels"></canvas></div>
+  </div>
+
+  <!-- ページ別 -->
+  <div class="card" id="cardPages" style="display:none;">
+    <h2><span class="icon">📄</span> ページ別アクセスランキング（上位20件）</h2>
+    <div class="hint">
+      <strong>この表の見方：</strong>どのページがよく見られているかのランキングです。
+      PV（ページビュー）が多いページは人気コンテンツです。
+      直帰率が高い場合、そのページだけ見て離脱するお客様が多いことを意味します。
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>ページタイトル</th>
+            <th>パス</th>
+            <th class="num">PV</th>
+            <th class="num">ユーザー</th>
+            <th class="num">滞在秒</th>
+            <th class="num">直帰率</th>
+          </tr>
+        </thead>
+        <tbody id="tbodyPages"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- コンバージョン -->
+  <div class="card" id="cardConversions" style="display:none;">
+    <h2><span class="icon">🎯</span> コンバージョン日次推移</h2>
+    <div class="hint">
+      <strong>このグラフの見方：</strong>購入・お問合せ・電話タップなどの成果（コンバージョン）が
+      日ごとにどれくらい発生しているかを示します。棒が高い日ほど成果が多い日です。
+      急に増えた日は施策の効果が出ている可能性があります。
+    </div>
+    <div class="chart-wrap"><canvas id="chartConversions"></canvas></div>
+  </div>
+
+</div>
+
+<footer style="text-align:center;padding:24px;font-size:0.75rem;color:#aaa;">
+  TARA SISTER GA4 ダッシュボード
+</footer>
+
+<script>
+// ============================
+// Config
+// ============================
+const LS_KEY = 'tarasister_gas_url';
+
+window.addEventListener('DOMContentLoaded', function() {
+  var saved = localStorage.getItem(LS_KEY);
+  if (saved) {
+    document.getElementById('gasUrl').value = saved;
+    loadAll();
+  }
+});
+
+function saveConfig() {
+  var url = document.getElementById('gasUrl').value.trim();
+  if (!url) return;
+  localStorage.setItem(LS_KEY, url);
+  showStatus('URL を保存しました', false);
+}
+
+function getBaseUrl() {
+  return document.getElementById('gasUrl').value.trim();
+}
+
+// ============================
+// データ取得
+// ============================
+var chartDaily = null;
+var chartChannels = null;
+var chartConversions = null;
+
+async function loadAll() {
+  var base = getBaseUrl();
+  if (!base) { showStatus('GAS WebアプリURLを入力してください', true); return; }
+
+  var btn = document.getElementById('btnLoad');
+  btn.disabled = true;
+  showStatus('データを取得中...', false);
+
+  try {
+    var [daily, pages, channels, conversions] = await Promise.all([
+      fetchData(base, 'daily'),
+      fetchData(base, 'pages'),
+      fetchData(base, 'channels'),
+      fetchData(base, 'conversions')
+    ]);
+
+    if (daily.error || pages.error || channels.error || conversions.error) {
+      var msg = daily.error || pages.error || channels.error || conversions.error;
+      showStatus('エラー: ' + msg, true);
+      btn.disabled = false;
+      return;
+    }
+
+    renderKPI(daily);
+    renderDailyChart(daily);
+    renderChannelsChart(channels);
+    renderPagesTable(pages);
+    renderConversionsChart(conversions);
+
+    showStatus('最終更新: ' + new Date().toLocaleString('ja-JP'), false);
+  } catch (e) {
+    showStatus('通信エラー: ' + e.message, true);
+  }
+  btn.disabled = false;
+}
+
+async function fetchData(base, type) {
+  var sep = base.indexOf('?') === -1 ? '?' : '&';
+  var res = await fetch(base + sep + 'type=' + type);
+  return res.json();
+}
+
+function showStatus(msg, isError) {
+  var el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'status error' : 'status';
+}
+
+// ============================
+// KPI
+// ============================
+function renderKPI(daily) {
+  if (!daily || !daily.length) return;
+  var totalUsers = 0, totalSessions = 0, totalPV = 0, totalCV = 0;
+  daily.forEach(function(d) {
+    totalUsers += d.users;
+    totalSessions += d.sessions;
+    totalPV += d.pageviews;
+    totalCV += d.conversions;
+  });
+  document.getElementById('kpiUsers').textContent = totalUsers.toLocaleString();
+  document.getElementById('kpiSessions').textContent = totalSessions.toLocaleString();
+  document.getElementById('kpiPV').textContent = totalPV.toLocaleString();
+  document.getElementById('kpiCV').textContent = totalCV.toLocaleString();
+  document.getElementById('kpiRow').style.display = '';
+}
+
+// ============================
+// 日別サマリ折れ線
+// ============================
+function renderDailyChart(data) {
+  if (!data || !data.length) return;
+  document.getElementById('cardDaily').style.display = '';
+
+  var labels = data.map(function(d) { return d.date.substring(5); }); // MM-DD
+  if (chartDaily) chartDaily.destroy();
+  chartDaily = new Chart(document.getElementById('chartDaily'), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'ユーザー数',
+          data: data.map(function(d) { return d.users; }),
+          borderColor: '#6b5b47',
+          backgroundColor: 'rgba(107,91,71,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        },
+        {
+          label: 'セッション数',
+          data: data.map(function(d) { return d.sessions; }),
+          borderColor: '#a89683',
+          backgroundColor: 'rgba(168,150,131,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        },
+        {
+          label: 'PV',
+          data: data.map(function(d) { return d.pageviews; }),
+          borderColor: '#c4a99a',
+          backgroundColor: 'rgba(196,169,154,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { ticks: { maxRotation: 45, font: { size: 11 } } },
+        y: { beginAtZero: true }
+      }
+    }
+  });
+}
+
+// ============================
+// 集客チャネル円グラフ
+// ============================
+var CHANNEL_COLORS = [
+  '#6b5b47','#a89683','#c4a99a','#8b7355','#b8a283',
+  '#9c8b6e','#d4c5b3','#7a6855','#ada190','#5d4e3c',
+  '#e8e0d2','#bfae93','#3d342a','#857058'
+];
+
+function renderChannelsChart(data) {
+  if (!data || !data.length) return;
+  document.getElementById('cardChannels').style.display = '';
+
+  // チャネルグループ単位で集計
+  var map = {};
+  data.forEach(function(d) {
+    map[d.channel] = (map[d.channel] || 0) + d.sessions;
+  });
+  var entries = Object.entries(map).sort(function(a, b) { return b[1] - a[1]; });
+  var labels = entries.map(function(e) { return e[0]; });
+  var values = entries.map(function(e) { return e[1]; });
+
+  if (chartChannels) chartChannels.destroy();
+  chartChannels = new Chart(document.getElementById('chartChannels'), {
+    type: 'doughnut',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        backgroundColor: CHANNEL_COLORS.slice(0, labels.length),
+        borderWidth: 2,
+        borderColor: '#fff'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 12 } } },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              var total = ctx.dataset.data.reduce(function(a, b) { return a + b; }, 0);
+              var pct = (ctx.raw / total * 100).toFixed(1);
+              return ctx.label + ': ' + ctx.raw.toLocaleString() + ' (' + pct + '%)';
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ============================
+// ページ別テーブル
+// ============================
+function renderPagesTable(data) {
+  if (!data || !data.length) return;
+  document.getElementById('cardPages').style.display = '';
+
+  var tbody = document.getElementById('tbodyPages');
+  tbody.innerHTML = '';
+  var top20 = data.slice(0, 20);
+  top20.forEach(function(d, i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + escapeHtml(d.pageTitle) + '</td>' +
+      '<td style="font-size:0.75rem;color:#888;">' + escapeHtml(d.pagePath) + '</td>' +
+      '<td class="num">' + d.pageviews.toLocaleString() + '</td>' +
+      '<td class="num">' + d.users.toLocaleString() + '</td>' +
+      '<td class="num">' + d.avgDuration + '</td>' +
+      '<td class="num">' + d.bounceRate + '%</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function escapeHtml(str) {
+  var d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ============================
+// コンバージョン棒グラフ
+// ============================
+var CV_COLORS = ['#6b5b47','#a89683','#c4a99a','#8b7355','#b8a283','#9c8b6e'];
+
+function renderConversionsChart(data) {
+  if (!data || !data.length) return;
+  document.getElementById('cardConversions').style.display = '';
+
+  // イベント名一覧を取得
+  var eventNames = [];
+  var dateSet = new Set();
+  data.forEach(function(d) {
+    if (eventNames.indexOf(d.eventName) === -1) eventNames.push(d.eventName);
+    dateSet.add(d.date);
+  });
+  var dates = Array.from(dateSet).sort();
+  var shortDates = dates.map(function(d) { return d.substring(5); });
+
+  // イベント×日付マトリクス
+  var byEvent = {};
+  eventNames.forEach(function(name) { byEvent[name] = {}; });
+  data.forEach(function(d) { byEvent[d.eventName][d.date] = d.eventCount; });
+
+  var datasets = eventNames.map(function(name, i) {
+    return {
+      label: name,
+      data: dates.map(function(dt) { return byEvent[name][dt] || 0; }),
+      backgroundColor: CV_COLORS[i % CV_COLORS.length],
+      borderRadius: 3
+    };
+  });
+
+  if (chartConversions) chartConversions.destroy();
+  chartConversions = new Chart(document.getElementById('chartConversions'), {
+    type: 'bar',
+    data: { labels: shortDates, datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { stacked: true, ticks: { maxRotation: 45, font: { size: 11 } } },
+        y: { stacked: true, beginAtZero: true }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>
