@@ -321,6 +321,19 @@
     </div>
   </div>
 
+  <!-- AI分析 -->
+  <section class="card" id="cardAI" style="display:none;">
+    <h2><span class="icon">🤖</span> AI分析レポート</h2>
+    <div class="hint" id="aiHelper">
+      Gemini APIで今日のデータを分析します。1日1回生成したあとはキャッシュが返されます（無駄なAPI呼び出しなし）。
+    </div>
+    <div style="margin: 12px 0;">
+      <button id="btnAI" class="btn-primary">本日のAI分析を取得</button>
+      <span id="aiStatus" style="margin-left: 12px; font-size: 0.9em; color: #888;"></span>
+    </div>
+    <div id="aiContent" style="display:none; padding: 16px; background: var(--primary-light); border-radius: 8px; line-height: 1.8;"></div>
+  </section>
+
   <!-- コンバージョン -->
   <div class="card" id="cardConversions" style="display:none;">
     <h2><span class="icon">🎯</span> コンバージョン日次推移</h2>
@@ -411,6 +424,7 @@ async function loadAll() {
     renderChannelsChart(channels);
     renderPagesTable(pages);
     renderConversionsChart(conversions);
+    document.getElementById('cardAI').style.display = '';
 
     showStatus('最終更新: ' + new Date().toLocaleString('ja-JP'), false);
   } catch (e) {
@@ -691,6 +705,57 @@ function renderConversionsChart(data) {
     }
   });
 }
+
+// ============================
+// AI分析
+// ============================
+function fetchAIAnalysis() {
+  var btn = document.getElementById('btnAI');
+  var status = document.getElementById('aiStatus');
+  var content = document.getElementById('aiContent');
+
+  btn.disabled = true;
+  status.style.color = '#888';
+  status.textContent = '分析中...(初回は20-30秒かかります)';
+  content.style.display = 'none';
+
+  fetch(GAS_URL + '?type=ai_analysis')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        status.textContent = 'エラー: ' + data.error;
+        status.style.color = '#c00';
+      } else {
+        var t = data.generatedAt ? new Date(data.generatedAt) : new Date();
+        var timeStr = t.toLocaleString('ja-JP');
+        var cachedMark = data.cached ? '（キャッシュ）' : '（新規生成）';
+        status.textContent = '最終生成: ' + timeStr + ' ' + cachedMark;
+        status.style.color = '#888';
+        content.innerHTML = renderMarkdown(data.analysis || '');
+        content.style.display = 'block';
+      }
+    })
+    .catch(function(err) {
+      status.textContent = 'エラー: ' + err.message;
+      status.style.color = '#c00';
+    })
+    .finally(function() {
+      btn.disabled = false;
+    });
+}
+
+// シンプルなMarkdown → HTML変換
+function renderMarkdown(md) {
+  var html = escapeHtml(md);
+  html = html.replace(/^### (.+)$/gm, '<h3 style="color: var(--accent-dark); margin-top: 16px;">$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2 style="color: var(--primary-dark);">$1</h2>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  return html;
+}
+
+document.getElementById('btnAI').addEventListener('click', fetchAIAnalysis);
 </script>
 </body>
 </html>

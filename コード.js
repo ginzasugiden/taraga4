@@ -33,6 +33,9 @@ const CONFIG = {
     CHANNEL_REPORT: 'GA4_集客チャネル別',
     CONVERSION_REPORT: 'GA4_コンバージョン別'
   },
+
+  AI_ANALYSIS_SHEET: 'GA4_AI分析',
+  GEMINI_MODEL: 'gemini-2.5-flash',
   
   // コンバージョンイベント名（GA4で設定済みのもの）
   CONVERSION_EVENTS: [
@@ -510,14 +513,191 @@ function appendDailySummary() {
 
 
 // ============================================
+// AI分析（Gemini API）
+// ============================================
+/**
+ * 本日のAI分析を取得。キャッシュがあればそれを返し、無ければ生成して保存
+ */
+function getOrGenerateAIAnalysis() {
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var sheet = getOrCreateSheet(CONFIG.AI_ANALYSIS_SHEET);
+
+  // ヘッダー初期化
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 3).setValues([['日付', '生成時刻', '分析内容']]);
+    sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  // 今日の分析が既にあるか確認
+  if (sheet.getLastRow() >= 2) {
+    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var cellDate = data[i][0];
+      var dateStr = (cellDate instanceof Date)
+        ? Utilities.formatDate(cellDate, 'Asia/Tokyo', 'yyyy-MM-dd')
+        : String(cellDate);
+      if (dateStr === today) {
+        return {
+          cached: true,
+          date: today,
+          generatedAt: data[i][1],
+          analysis: data[i][2]
+        };
+      }
+    }
+  }
+
+  // キャッシュなし → Gemini API 呼び出し
+  var summaryData = collectSummaryDataForAI();
+  var prompt = buildAIPrompt(summaryData);
+  var analysis = callGeminiAPI(prompt);
+
+  var now = new Date();
+  sheet.appendRow([today, now, analysis]);
+
+  return {
+    cached: false,
+    date: today,
+    generatedAt: now,
+    analysis: analysis
+  };
+}
+
+/**
+ * スプレッドシートの4シートから要約データを読み取り
+ */
+function collectSummaryDataForAI() {
+  var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  var result = {
+    daily: [],
+    pages: [],
+    channels: [],
+    conversions: []
+  };
+
+  var dailySheet = ss.getSheetByName(CONFIG.SHEETS.DAILY_SUMMARY);
+  if (dailySheet && dailySheet.getLastRow() > 1) {
+    result.daily = dailySheet.getRange(2, 1, Math.min(30, dailySheet.getLastRow() - 1), dailySheet.getLastColumn()).getValues();
+  }
+
+  var pagesSheet = ss.getSheetByName(CONFIG.SHEETS.PAGE_REPORT);
+  if (pagesSheet && pagesSheet.getLastRow() > 1) {
+    result.pages = pagesSheet.getRange(2, 1, Math.min(20, pagesSheet.getLastRow() - 1), pagesSheet.getLastColumn()).getValues();
+  }
+
+  var chSheet = ss.getSheetByName(CONFIG.SHEETS.CHANNEL_REPORT);
+  if (chSheet && chSheet.getLastRow() > 1) {
+    result.channels = chSheet.getRange(2, 1, chSheet.getLastRow() - 1, chSheet.getLastColumn()).getValues();
+  }
+
+  var cvSheet = ss.getSheetByName(CONFIG.SHEETS.CONVERSION_REPORT);
+  if (cvSheet && cvSheet.getLastRow() > 1) {
+    result.conversions = cvSheet.getRange(2, 1, cvSheet.getLastRow() - 1, cvSheet.getLastColumn()).getValues();
+  }
+
+  return result;
+}
+
+/**
+ * Gemini API用プロンプトを構築
+ */
+function buildAIPrompt(data) {
+  var lines = [];
+  lines.push('あなたはGA4データからECサイトの売上改善提案を行うアナリストです。');
+  lines.push('対象サイト: TARA SISTER (tarasister.com) - スキンケア・化粧品のD2Cブランド (BASE使用)');
+  lines.push('');
+  lines.push('以下はこのサイトの過去30日のGA4データです。客観的かつ実践的に分析してください。');
+  lines.push('');
+  lines.push('## 日別サマリ (列: 日付/ユーザー/セッション/PV/CV)');
+  data.daily.forEach(function(row) { lines.push(row.join('\t')); });
+  lines.push('');
+  lines.push('## ページ別TOP20 (列: タイトル/パス/PV/ユーザー/滞在秒/直帰率)');
+  data.pages.forEach(function(row) { lines.push(row.join('\t')); });
+  lines.push('');
+  lines.push('## 集客チャネル別');
+  data.channels.forEach(function(row) { lines.push(row.join('\t')); });
+  lines.push('');
+  lines.push('## コンバージョン');
+  data.conversions.forEach(function(row) { lines.push(row.join('\t')); });
+  lines.push('');
+  lines.push('## 以下の形式で出力してください (Markdown、800-1200文字程度、日本語):');
+  lines.push('');
+  lines.push('### 📈 今週のトレンド');
+  lines.push('(データから読み取れる直近のアクセス傾向・急増急減・曜日特性など)');
+  lines.push('');
+  lines.push('### 🎯 注目すべきページ・コンテンツ');
+  lines.push('(PVが多い/滞在時間が長い/直帰率が低いなど好調なページと、その理由の推測)');
+  lines.push('');
+  lines.push('### ⚠️ 改善が必要なページ');
+  lines.push('(直帰率が高い/滞在時間が短いなど問題のあるページ、改善案)');
+  lines.push('');
+  lines.push('### 📊 転換率 (CVR) の状況');
+  lines.push('(全体CVR、チャネル別CVRの差、どこに注力すべきか)');
+  lines.push('');
+  lines.push('### 💡 次の1週間でやるべき具体的アクション3つ');
+  lines.push('(優先順に、実行可能な具体策を3つ)');
+  lines.push('');
+  lines.push('※ 数値は元データから正確に引用すること。推測はその旨明記すること。');
+
+  return lines.join('\n');
+}
+
+/**
+ * Gemini API を呼び出してテキストを返す
+ */
+function callGeminiAPI(prompt) {
+  var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY が Script Properties に設定されていません');
+  }
+
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + CONFIG.GEMINI_MODEL + ':generateContent?key=' + apiKey;
+
+  var payload = {
+    contents: [{
+      parts: [{ text: prompt }]
+    }],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 2048
+    }
+  };
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  var response = UrlFetchApp.fetch(url, options);
+  var code = response.getResponseCode();
+  var body = response.getContentText();
+
+  if (code !== 200) {
+    throw new Error('Gemini API エラー: HTTP ' + code + ' ' + body);
+  }
+
+  var json = JSON.parse(body);
+  if (!json.candidates || !json.candidates[0] || !json.candidates[0].content || !json.candidates[0].content.parts) {
+    throw new Error('Gemini API 応答形式エラー: ' + body);
+  }
+
+  return json.candidates[0].content.parts[0].text;
+}
+
+
+// ============================================
 // Web API（doGet）
 // ============================================
 /**
  * Webアプリとしてデプロイ後、URLパラメータでデータを取得
- * ?type=daily    → 日別サマリ
- * ?type=pages    → ページ別
- * ?type=channels → 集客チャネル別
+ * ?type=daily       → 日別サマリ
+ * ?type=pages       → ページ別
+ * ?type=channels    → 集客チャネル別
  * ?type=conversions → コンバージョン別
+ * ?type=ai_analysis → Gemini API によるAI分析（1日1回キャッシュ）
  */
 function doGet(e) {
   var type = (e && e.parameter && e.parameter.type) ? e.parameter.type : '';
@@ -537,8 +717,11 @@ function doGet(e) {
       case 'conversions':
         result = getDataConversionReport();
         break;
+      case 'ai_analysis':
+        result = getOrGenerateAIAnalysis();
+        break;
       default:
-        result = { error: 'パラメータ type に daily, pages, channels, conversions のいずれかを指定してください' };
+        result = { error: 'パラメータ type に daily, pages, channels, conversions, ai_analysis のいずれかを指定してください' };
     }
   } catch (err) {
     result = { error: err.message };
