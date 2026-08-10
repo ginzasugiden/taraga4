@@ -4,6 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TARA SISTER アクセス解析ダッシュボード</title>
+<script>
+// ダッシュボード自体の閲覧計測（本体サイトのGA4とは別の専用プロパティ）
+// localhost / file:// では読み込まない（開発ノイズ防止）
+(function() {
+  var host = location.hostname;
+  var isLocal = (host === 'localhost' || host === '127.0.0.1' || location.protocol === 'file:');
+  if (isLocal) return;
+  try {
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function() { dataLayer.push(arguments); };
+    gtag('js', new Date());
+    gtag('config', 'G-SCYCDZM43E');
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://www.googletagmanager.com/gtag/js?id=G-SCYCDZM43E';
+    document.head.appendChild(s);
+  } catch (e) {
+    // 計測初期化の失敗はダッシュボード本体の動作に影響させない
+  }
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -355,7 +376,7 @@
 
   <!-- 操作バー -->
   <div class="config-bar">
-    <button id="btnLoad" onclick="loadAll()">データを更新</button>
+    <button id="btnLoad" onclick="onRefreshButtonClick()">データを更新</button>
     <button onclick="logout()" style="background:var(--accent-dark)">ログアウト</button>
   </div>
 
@@ -473,6 +494,24 @@ const SITE_BASE_URL = 'https://www.tarasister.com';
 const AUTH_PASSWORD = 'tara2018';
 const AUTH_STORAGE_KEY = 'tara_authed';
 
+// ============================
+// ダッシュボード閲覧計測（専用GA4プロパティ）
+// ============================
+// 計測失敗がダッシュボード本体の動作を阻害しないよう、必ずtry/catchで囲む。
+// パスワードやGAS_URLなどの秘匿情報はイベントパラメータに含めない。
+function trackDashboardEvent(eventName, extraParams) {
+  try {
+    var host = location.hostname;
+    var isLocal = (host === 'localhost' || host === '127.0.0.1' || location.protocol === 'file:');
+    if (isLocal) return;
+    if (typeof gtag !== 'function') return;
+    var params = Object.assign({ site: 'tarasister' }, extraParams || {});
+    gtag('event', eventName, params);
+  } catch (e) {
+    // 計測失敗は握りつぶす
+  }
+}
+
 window.addEventListener('DOMContentLoaded', function() {
   if (sessionStorage.getItem(AUTH_STORAGE_KEY) === '1') {
     hideAuthOverlay();
@@ -487,6 +526,7 @@ function doLogin(e) {
   if (pw === AUTH_PASSWORD) {
     sessionStorage.setItem(AUTH_STORAGE_KEY, '1');
     err.textContent = '';
+    trackDashboardEvent('login_success');
     hideAuthOverlay();
     loadAll();
   } else {
@@ -512,6 +552,11 @@ var chartDaily = null;
 var chartChannels = null;
 var chartConversions = null;
 var chartFunnel = null;
+
+function onRefreshButtonClick() {
+  trackDashboardEvent('data_refresh');
+  loadAll();
+}
 
 async function loadAll() {
   var btn = document.getElementById('btnLoad');
@@ -1031,6 +1076,8 @@ function fetchAIAnalysis() {
   var btn = document.getElementById('btnAI');
   var status = document.getElementById('aiStatus');
   var content = document.getElementById('aiContent');
+
+  trackDashboardEvent('ai_report_view');
 
   btn.disabled = true;
   status.style.color = '#888';
