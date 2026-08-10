@@ -422,9 +422,9 @@
   <div class="card" id="cardConversions" style="display:none;">
     <h2><span class="icon">🎯</span> コンバージョン日次推移</h2>
     <div class="hint">
-      <strong>このグラフの見方：</strong>購入・お問合せ・電話タップなどの成果（コンバージョン）が
-      日ごとにどれくらい発生しているかを示します。棒が高い日ほど成果が多い日です。
-      急に増えた日は施策の効果が出ている可能性があります。
+      <strong>このグラフの見方：</strong>棒グラフが購入件数、折れ線がセッション数です。アクセスが多いのに購入が
+      0の日が続く場合は、商品ページや購入導線に改善余地があります。両者の
+      動きを見比べて「集客」と「接客」のどちらに課題があるかを判断しましょう。
     </div>
     <div class="chart-wrap"><canvas id="chartConversions"></canvas></div>
   </div>
@@ -507,7 +507,7 @@ async function loadAll() {
     renderDailyChart(daily);
     renderChannelsChart(channels);
     renderPagesTable(pages);
-    renderConversionsChart(conversions);
+    renderConversionsChart(conversions, daily);
     document.getElementById('cardAI').style.display = '';
 
     showStatus('最終更新: ' + new Date().toLocaleString('ja-JP'), false);
@@ -741,50 +741,88 @@ function escapeHtml(str) {
 }
 
 // ============================
-// コンバージョン棒グラフ
+// コンバージョン日次推移（棒：CV件数 + 折れ線：セッション数）
 // ============================
 var CV_COLORS = ['#6b5b47','#a89683','#c4a99a','#8b7355','#b8a283','#9c8b6e'];
 
-function renderConversionsChart(data) {
-  if (!data || !data.length) return;
+function renderConversionsChart(data, dailyData) {
+  if (!dailyData || !dailyData.length) return;
   document.getElementById('cardConversions').style.display = '';
 
-  // イベント名一覧を取得
-  var eventNames = [];
-  var dateSet = new Set();
-  data.forEach(function(d) {
-    if (eventNames.indexOf(d.eventName) === -1) eventNames.push(d.eventName);
-    dateSet.add(d.date);
-  });
-  var dates = Array.from(dateSet).sort();
+  // 日別アクセス推移と同じ日付配列を正として使い、無い日は0で埋める
+  var dates = dailyData.map(function(d) { return d.date; });
   var shortDates = dates.map(function(d) { return d.substring(5); });
 
-  // イベント×日付マトリクス
-  var byEvent = {};
-  eventNames.forEach(function(name) { byEvent[name] = {}; });
-  data.forEach(function(d) { byEvent[d.eventName][d.date] = d.eventCount; });
-
-  var datasets = eventNames.map(function(name, i) {
-    return {
-      label: name,
-      data: dates.map(function(dt) { return byEvent[name][dt] || 0; }),
-      backgroundColor: CV_COLORS[i % CV_COLORS.length],
-      borderRadius: 3
-    };
+  var cvByDate = {};
+  (data || []).forEach(function(d) {
+    cvByDate[d.date] = (cvByDate[d.date] || 0) + d.eventCount;
   });
+  var sessionsByDate = {};
+  dailyData.forEach(function(d) { sessionsByDate[d.date] = d.sessions; });
+
+  var cvCounts = dates.map(function(dt) { return cvByDate[dt] || 0; });
+  var sessionCounts = dates.map(function(dt) { return sessionsByDate[dt] || 0; });
+  var maxCv = cvCounts.length ? Math.max.apply(null, cvCounts) : 0;
 
   if (chartConversions) chartConversions.destroy();
   chartConversions = new Chart(document.getElementById('chartConversions'), {
-    type: 'bar',
-    data: { labels: shortDates, datasets: datasets },
+    data: {
+      labels: shortDates,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'コンバージョン数',
+          data: cvCounts,
+          backgroundColor: CV_COLORS[0],
+          borderRadius: 3,
+          yAxisID: 'yCv'
+        },
+        {
+          type: 'line',
+          label: 'セッション数',
+          data: sessionCounts,
+          borderColor: '#a89683',
+          backgroundColor: 'rgba(168,150,131,0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          yAxisID: 'ySession'
+        }
+      ]
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { position: 'top' } },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: {
+            afterBody: function(items) {
+              var idx = items[0].dataIndex;
+              var cv = cvCounts[idx];
+              var sessions = sessionCounts[idx];
+              var cvr = sessions > 0 ? 'CVR: ' + (cv / sessions * 100).toFixed(2) + '%' : 'CVR: -';
+              return cvr;
+            }
+          }
+        }
+      },
       scales: {
-        x: { stacked: true, ticks: { maxRotation: 45, font: { size: 11 } } },
-        y: { stacked: true, beginAtZero: true }
+        x: { ticks: { maxRotation: 45, font: { size: 11 } } },
+        yCv: {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: true,
+          suggestedMax: maxCv + 1,
+          ticks: { precision: 0, stepSize: 1 },
+          grid: { drawOnChartArea: false }
+        },
+        ySession: {
+          type: 'linear',
+          position: 'left',
+          beginAtZero: true
+        }
       }
     }
   });
