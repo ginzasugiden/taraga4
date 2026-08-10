@@ -138,6 +138,7 @@
   .kpi-delta .delta-sub { color: #aaa; margin-left: 4px; }
 
   .funnel-summary { margin-top: 10px; font-size: 0.85rem; color: var(--accent-dark); text-align: center; }
+  .funnel-note { margin-top: 4px; font-size: 0.72rem; color: #aaa; text-align: center; }
 
   .cell-warn { background: rgba(176,90,80,0.15); }
   .cell-caution { background: rgba(196,168,74,0.18); }
@@ -442,6 +443,8 @@
     </div>
     <div class="chart-wrap"><canvas id="chartFunnel"></canvas></div>
     <div id="funnelSummary" class="funnel-summary"></div>
+    <div class="funnel-note">※ 各数値はページ閲覧数ベースの目安です。同じページを複数回見た場合も
+      カウントされるため、遷移率が100%を超えることがあります。</div>
   </div>
 
   <!-- コンバージョン -->
@@ -918,14 +921,15 @@ function renderFunnelChart(funnel) {
       labels: shortDates,
       datasets: [
         {
-          label: '商品ページ閲覧',
+          label: '商品ページ閲覧（右軸）',
           data: funnel.map(function(d) { return d.itemPageViews; }),
           borderColor: '#c4a99a',
           backgroundColor: 'rgba(196,169,154,0.08)',
           fill: false,
           tension: 0.3,
           pointRadius: 2,
-          borderWidth: 1.5
+          borderWidth: 1.5,
+          yAxisID: 'yItems'
         },
         {
           label: 'カート到達',
@@ -935,7 +939,8 @@ function renderFunnelChart(funnel) {
           fill: false,
           tension: 0.3,
           pointRadius: 2,
-          borderWidth: 1.5
+          borderWidth: 1.5,
+          yAxisID: 'yFunnel'
         },
         {
           label: '購入情報入力',
@@ -945,7 +950,8 @@ function renderFunnelChart(funnel) {
           fill: false,
           tension: 0.3,
           pointRadius: 2,
-          borderWidth: 1.5
+          borderWidth: 1.5,
+          yAxisID: 'yFunnel'
         },
         {
           label: '購入',
@@ -955,7 +961,8 @@ function renderFunnelChart(funnel) {
           fill: false,
           tension: 0.3,
           pointRadius: 3,
-          borderWidth: 3
+          borderWidth: 3,
+          yAxisID: 'yFunnel'
         }
       ]
     },
@@ -966,12 +973,33 @@ function renderFunnelChart(funnel) {
       plugins: { legend: { position: 'top' } },
       scales: {
         x: { ticks: { maxRotation: 45, font: { size: 11 } } },
-        y: { beginAtZero: true, ticks: { precision: 0 } }
+        yFunnel: {
+          type: 'linear',
+          position: 'left',
+          beginAtZero: true,
+          suggestedMax: funnelAxisMax(funnel),
+          ticks: { precision: 0, stepSize: 1 }
+        },
+        yItems: {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: true,
+          grid: { drawOnChartArea: false }
+        }
       }
     }
   });
 
   renderFunnelSummary(funnel);
+}
+
+// 左軸（カート・情報入力・購入）の上限。3系列の最大値+1にして0.x刻みを防ぐ
+function funnelAxisMax(funnel) {
+  var max = 0;
+  funnel.forEach(function(d) {
+    max = Math.max(max, d.cartViews, d.checkoutEditViews, d.purchases);
+  });
+  return max + 1;
 }
 
 // 直近30日合計のファネルサマリー行（前段からの遷移率つき。前段0件の場合は「-」）
