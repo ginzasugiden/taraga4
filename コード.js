@@ -834,6 +834,8 @@ function callGeminiAPI(prompt) {
  * ?type=pages       → ページ別
  * ?type=channels    → 集客チャネル別
  * ?type=conversions → コンバージョン別
+ * ?type=funnel      → ファネル日次推移（商品ページ→カート→購入情報入力→購入）
+ * ?type=comparison  → 前期間（31〜60日前）のKPI合計値（前期間比較用）
  * ?type=ai_analysis → Gemini API によるAI分析（1日1回キャッシュ）
  */
 function doGet(e) {
@@ -854,11 +856,17 @@ function doGet(e) {
       case 'conversions':
         result = getDataConversionReport();
         break;
+      case 'funnel':
+        result = getDataFunnelReport();
+        break;
+      case 'comparison':
+        result = { previousPeriod: getDataPreviousPeriodSummary() };
+        break;
       case 'ai_analysis':
         result = getOrGenerateAIAnalysis();
         break;
       default:
-        result = { error: 'パラメータ type に daily, pages, channels, conversions, ai_analysis のいずれかを指定してください' };
+        result = { error: 'パラメータ type に daily, pages, channels, conversions, funnel, comparison, ai_analysis のいずれかを指定してください' };
     }
   } catch (err) {
     result = { error: err.message };
@@ -871,6 +879,7 @@ function doGet(e) {
 
 /**
  * 日別サマリデータを取得してJSON用オブジェクトで返す
+ * （既存の形式・フィールド構成から一切変更していない）
  */
 function getDataDailySummary() {
   var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
@@ -906,6 +915,38 @@ function getDataDailySummary() {
       conversions: Number(m[6].value)
     };
   });
+}
+
+/**
+ * 前期間（31〜60日前）のKPI合計値を取得。新規の独立エンドポイント。
+ * 既存の daily/pages/channels/conversions のレスポンス構造には一切触れない。
+ * 戻り値: {users, sessions, pageviews, conversions} または取得不可時 null
+ */
+function getDataPreviousPeriodSummary() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var request = {
+    dateRanges: [{
+      startDate: (CONFIG.DATE_RANGE_DAYS * 2) + 'daysAgo',
+      endDate: (CONFIG.DATE_RANGE_DAYS + 1) + 'daysAgo'
+    }],
+    metrics: [
+      { name: 'totalUsers' },
+      { name: 'sessions' },
+      { name: 'screenPageViews' },
+      { name: 'conversions' }
+    ]
+  };
+
+  var response = AnalyticsData.Properties.runReport(request, property);
+  if (!response.rows || response.rows.length === 0) return null;
+
+  var m = response.rows[0].metricValues;
+  return {
+    users: Number(m[0].value),
+    sessions: Number(m[1].value),
+    pageviews: Number(m[2].value),
+    conversions: Number(m[3].value)
+  };
 }
 
 /**
@@ -1020,6 +1061,59 @@ function getDataConversionReport() {
       eventName: d[1].value,
       eventCount: Number(m[0].value),
       users: Number(m[1].value)
+    };
+  });
+}
+
+/**
+ * ファネル日次推移データを取得（商品ページ閲覧 → カート到達 → 購入情報入力 → 購入）。
+ * 商品ページ/カート/購入情報入力の3系列は date × pagePath のPVレポートをGAS側で集約。
+ * 購入は getDataDailySummary() の日次コンバージョン数（既存ロジック）をそのまま流用する。
+ * 日付配列は getDataDailySummary() の rows（＝日別アクセス推移と同じ過去30日配列）を正とし、
+ * データが無い日は0で埋める。
+ */
+function getDataFunnelReport() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var request = {
+    dateRanges: [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }],
+    dimensions: [{ name: 'date' }, { name: 'pagePath' }],
+    metrics: [{ name: 'screenPageViews' }],
+    limit: 100000
+  };
+
+  var response = AnalyticsData.Properties.runReport(request, property);
+
+  var byDate = {};
+  if (response.rows) {
+    response.rows.forEach(function(row) {
+      var d = row.dimensionValues[0].value;
+      var path = row.dimensionValues[1].value;
+      var pv = Number(row.metricValues[0].value);
+      var date = d.substring(0, 4) + '-' + d.substring(4, 6) + '-' + d.substring(6, 8);
+
+      if (!byDate[date]) {
+        byDate[date] = { itemPageViews: 0, cartViews: 0, checkoutEditViews: 0 };
+      }
+      if (path.indexOf('/items/') === 0) {
+        byDate[date].itemPageViews += pv;
+      } else if (path.indexOf('/checkout/bag') !== -1) {
+        byDate[date].cartViews += pv;
+      } else if (path.indexOf('/checkout/edit') !== -1) {
+        byDate[date].checkoutEditViews += pv;
+      }
+    });
+  }
+
+  var dailyRows = getDataDailySummary();
+
+  return dailyRows.map(function(d) {
+    var f = byDate[d.date] || { itemPageViews: 0, cartViews: 0, checkoutEditViews: 0 };
+    return {
+      date: d.date,
+      itemPageViews: f.itemPageViews,
+      cartViews: f.cartViews,
+      checkoutEditViews: f.checkoutEditViews,
+      purchases: d.conversions
     };
   });
 }

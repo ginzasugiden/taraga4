@@ -131,6 +131,17 @@
   }
   .kpi-box .kpi-value { font-size: 1.5rem; font-weight: 700; color: var(--primary-dark); }
   .kpi-box .kpi-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+  .kpi-delta { font-size: 0.72rem; margin-top: 4px; min-height: 1em; }
+  .kpi-delta .delta-up { color: #7a9b7e; font-weight: 600; }
+  .kpi-delta .delta-down { color: #b1685c; font-weight: 600; }
+  .kpi-delta .delta-flat { color: #999; font-weight: 600; }
+  .kpi-delta .delta-sub { color: #aaa; margin-left: 4px; }
+
+  .funnel-summary { margin-top: 10px; font-size: 0.85rem; color: var(--accent-dark); text-align: center; }
+
+  .cell-warn { background: rgba(176,90,80,0.15); }
+  .cell-caution { background: rgba(196,168,74,0.18); }
+  .cell-good { background: rgba(122,155,126,0.18); }
 
   /* チャートコンテナ */
   .chart-wrap {
@@ -351,10 +362,10 @@
 
   <!-- KPI -->
   <div class="kpi-row" id="kpiRow" style="display:none;">
-    <div class="kpi-box"><div class="kpi-value" id="kpiUsers">-</div><div class="kpi-label">ユーザー数（合計）</div></div>
-    <div class="kpi-box"><div class="kpi-value" id="kpiSessions">-</div><div class="kpi-label">セッション数</div></div>
-    <div class="kpi-box"><div class="kpi-value" id="kpiPV">-</div><div class="kpi-label">ページビュー</div></div>
-    <div class="kpi-box"><div class="kpi-value" id="kpiCV">-</div><div class="kpi-label">コンバージョン</div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiUsers">-</div><div class="kpi-label">ユーザー数（合計）</div><div class="kpi-delta" id="kpiUsersDelta"></div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiSessions">-</div><div class="kpi-label">セッション数</div><div class="kpi-delta" id="kpiSessionsDelta"></div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiPV">-</div><div class="kpi-label">ページビュー</div><div class="kpi-delta" id="kpiPVDelta"></div></div>
+    <div class="kpi-box"><div class="kpi-value" id="kpiCV">-</div><div class="kpi-label">コンバージョン</div><div class="kpi-delta" id="kpiCVDelta"></div></div>
   </div>
 
   <!-- 日別サマリ -->
@@ -386,6 +397,8 @@
       <strong>この表の見方：</strong>どのページがよく見られているかのランキングです。
       PV（ページビュー）が多いページは人気コンテンツです。
       直帰率が高い場合、そのページだけ見て離脱するお客様が多いことを意味します。
+      色付きのセルは注意（赤系）・良好（緑系）の目安です。PVが少ない
+      ページは率が大きくぶれるため色付けしていません。
     </div>
     <div class="table-wrap">
       <table>
@@ -417,6 +430,19 @@
     </div>
     <div id="aiContent" style="display:none; padding: 16px; background: var(--primary-light); border-radius: 8px; line-height: 1.8;"></div>
   </section>
+
+  <!-- ファネル -->
+  <div class="card" id="cardFunnel" style="display:none;">
+    <h2><span class="icon">🔻</span> ファネル日次推移</h2>
+    <div class="hint">
+      <strong>このグラフの見方：</strong>お客様が購入に至るまでの各ステップの通過数です。段差が大きく落ちる
+      箇所がボトルネックです。「商品ページ→カート」の落差が大きければ商品
+      ページの訴求、「カート→購入」の落差が大きければ購入手続きの改善が
+      効果的です。
+    </div>
+    <div class="chart-wrap"><canvas id="chartFunnel"></canvas></div>
+    <div id="funnelSummary" class="funnel-summary"></div>
+  </div>
 
   <!-- コンバージョン -->
   <div class="card" id="cardConversions" style="display:none;">
@@ -482,6 +508,7 @@ function logout() {
 var chartDaily = null;
 var chartChannels = null;
 var chartConversions = null;
+var chartFunnel = null;
 
 async function loadAll() {
   var btn = document.getElementById('btnLoad');
@@ -489,11 +516,13 @@ async function loadAll() {
   showStatus('データを取得中...', false);
 
   try {
-    var [daily, pages, channels, conversions] = await Promise.all([
+    var [daily, pages, channels, conversions, funnel, comparison] = await Promise.all([
       fetchData('daily'),
       fetchData('pages'),
       fetchData('channels'),
-      fetchData('conversions')
+      fetchData('conversions'),
+      fetchData('funnel'),
+      fetchData('comparison')
     ]);
 
     if (daily.error || pages.error || channels.error || conversions.error) {
@@ -503,11 +532,14 @@ async function loadAll() {
       return;
     }
 
-    renderKPI(daily);
+    var previousPeriod = (comparison && !comparison.error) ? comparison.previousPeriod : null;
+
+    renderKPI(daily, previousPeriod);
     renderDailyChart(daily);
     renderChannelsChart(channels);
     renderPagesTable(pages);
     renderConversionsChart(conversions, daily);
+    renderFunnelChart(funnel);
     document.getElementById('cardAI').style.display = '';
 
     showStatus('最終更新: ' + new Date().toLocaleString('ja-JP'), false);
@@ -532,7 +564,7 @@ function showStatus(msg, isError) {
 // ============================
 // KPI
 // ============================
-function renderKPI(daily) {
+function renderKPI(daily, previousPeriod) {
   if (!daily || !daily.length) return;
   var totalUsers = 0, totalSessions = 0, totalPV = 0, totalCV = 0;
   daily.forEach(function(d) {
@@ -546,6 +578,29 @@ function renderKPI(daily) {
   document.getElementById('kpiPV').textContent = totalPV.toLocaleString();
   document.getElementById('kpiCV').textContent = totalCV.toLocaleString();
   document.getElementById('kpiRow').style.display = '';
+
+  renderKPIDelta('kpiUsersDelta', totalUsers, previousPeriod && previousPeriod.users);
+  renderKPIDelta('kpiSessionsDelta', totalSessions, previousPeriod && previousPeriod.sessions);
+  renderKPIDelta('kpiPVDelta', totalPV, previousPeriod && previousPeriod.pageviews);
+  renderKPIDelta('kpiCVDelta', totalCV, previousPeriod && previousPeriod.conversions);
+}
+
+// 前期間比（増減%）を1つのKPIカードに描画。previousPeriodが無い/0の場合はエラーにせず「-」または非表示にする。
+function renderKPIDelta(elId, current, previous) {
+  var el = document.getElementById(elId);
+  if (!el) return;
+  if (previous === undefined || previous === null) {
+    el.innerHTML = '';
+    return;
+  }
+  if (previous === 0) {
+    el.innerHTML = '<span class="delta-flat">-</span><span class="delta-sub">前30日比</span>';
+    return;
+  }
+  var pct = (current - previous) / previous * 100;
+  var sign = pct > 0 ? '▲' : (pct < 0 ? '▼' : '±');
+  var cls = pct > 0 ? 'delta-up' : (pct < 0 ? 'delta-down' : 'delta-flat');
+  el.innerHTML = '<span class="' + cls + '">' + sign + Math.abs(pct).toFixed(1) + '%</span><span class="delta-sub">前30日比</span>';
 }
 
 // ============================
@@ -713,6 +768,23 @@ function renderTitleCell(title, path) {
   return safeTitle;
 }
 
+// PVが少ない行（母数が小さく率が暴れるため）は色付け対象外にし、参考値である旨をtitleで示す
+var LOW_PV_THRESHOLD = 10;
+
+function bounceRateCellInfo(bounceRate, pv) {
+  if (pv < LOW_PV_THRESHOLD) return { cls: '', title: 'PVが少ないため参考値' };
+  if (bounceRate >= 50) return { cls: 'cell-warn', title: '' };
+  if (bounceRate >= 30) return { cls: 'cell-caution', title: '' };
+  return { cls: '', title: '' };
+}
+
+function durationCellInfo(avgDuration, pv) {
+  if (pv < LOW_PV_THRESHOLD) return { cls: '', title: 'PVが少ないため参考値' };
+  if (avgDuration < 10) return { cls: 'cell-warn', title: '' };
+  if (avgDuration >= 120) return { cls: 'cell-good', title: '' };
+  return { cls: '', title: '' };
+}
+
 function renderPagesTable(data) {
   if (!data || !data.length) return;
   document.getElementById('cardPages').style.display = '';
@@ -722,14 +794,16 @@ function renderPagesTable(data) {
   var top20 = data.slice(0, 20);
   top20.forEach(function(d, i) {
     var tr = document.createElement('tr');
+    var durationInfo = durationCellInfo(d.avgDuration, d.pageviews);
+    var bounceInfo = bounceRateCellInfo(d.bounceRate, d.pageviews);
     tr.innerHTML =
       '<td>' + (i + 1) + '</td>' +
       '<td>' + renderTitleCell(d.pageTitle, d.pagePath) + '</td>' +
       '<td style="font-size:0.75rem;color:#888;">' + renderPathCell(d.pagePath) + '</td>' +
       '<td class="num">' + d.pageviews.toLocaleString() + '</td>' +
       '<td class="num">' + d.users.toLocaleString() + '</td>' +
-      '<td class="num">' + d.avgDuration + '</td>' +
-      '<td class="num">' + d.bounceRate + '%</td>';
+      '<td class="num ' + durationInfo.cls + '"' + (durationInfo.title ? ' title="' + durationInfo.title + '"' : '') + '>' + d.avgDuration + '</td>' +
+      '<td class="num ' + bounceInfo.cls + '"' + (bounceInfo.title ? ' title="' + bounceInfo.title + '"' : '') + '>' + d.bounceRate + '%</td>';
     tbody.appendChild(tr);
   });
 }
@@ -826,6 +900,100 @@ function renderConversionsChart(data, dailyData) {
       }
     }
   });
+}
+
+// ============================
+// ファネル日次推移（商品ページ→カート→購入情報入力→購入）
+// ============================
+function renderFunnelChart(funnel) {
+  if (!funnel || !funnel.length) return;
+  document.getElementById('cardFunnel').style.display = '';
+
+  var shortDates = funnel.map(function(d) { return d.date.substring(5); });
+
+  if (chartFunnel) chartFunnel.destroy();
+  chartFunnel = new Chart(document.getElementById('chartFunnel'), {
+    type: 'line',
+    data: {
+      labels: shortDates,
+      datasets: [
+        {
+          label: '商品ページ閲覧',
+          data: funnel.map(function(d) { return d.itemPageViews; }),
+          borderColor: '#c4a99a',
+          backgroundColor: 'rgba(196,169,154,0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 1.5
+        },
+        {
+          label: 'カート到達',
+          data: funnel.map(function(d) { return d.cartViews; }),
+          borderColor: '#a89683',
+          backgroundColor: 'rgba(168,150,131,0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 1.5
+        },
+        {
+          label: '購入情報入力',
+          data: funnel.map(function(d) { return d.checkoutEditViews; }),
+          borderColor: '#8b7355',
+          backgroundColor: 'rgba(139,115,85,0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 1.5
+        },
+        {
+          label: '購入',
+          data: funnel.map(function(d) { return d.purchases; }),
+          borderColor: '#3d342a',
+          backgroundColor: 'rgba(61,52,42,0.08)',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { ticks: { maxRotation: 45, font: { size: 11 } } },
+        y: { beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+
+  renderFunnelSummary(funnel);
+}
+
+// 直近30日合計のファネルサマリー行（前段からの遷移率つき。前段0件の場合は「-」）
+function renderFunnelSummary(funnel) {
+  var totals = funnel.reduce(function(acc, d) {
+    acc.item += d.itemPageViews;
+    acc.cart += d.cartViews;
+    acc.edit += d.checkoutEditViews;
+    acc.purchase += d.purchases;
+    return acc;
+  }, { item: 0, cart: 0, edit: 0, purchase: 0 });
+
+  function rate(curr, prev) {
+    return prev > 0 ? (curr / prev * 100).toFixed(1) + '%' : '-';
+  }
+
+  var summary = '商品ページ ' + totals.item.toLocaleString() +
+    ' → カート ' + totals.cart.toLocaleString() + '（' + rate(totals.cart, totals.item) + '）' +
+    ' → 情報入力 ' + totals.edit.toLocaleString() + '（' + rate(totals.edit, totals.cart) + '）' +
+    ' → 購入 ' + totals.purchase.toLocaleString() + '（' + rate(totals.purchase, totals.edit) + '）';
+
+  document.getElementById('funnelSummary').textContent = summary;
 }
 
 // ============================
