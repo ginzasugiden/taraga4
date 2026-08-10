@@ -36,7 +36,7 @@ const CONFIG = {
     AI_ANALYSIS_LOG: 'GA4_AI分析_ログ'
   },
 
-  GEMINI_MODEL: 'gemini-2.0-flash',
+  GEMINI_MODEL: 'gemini-2.5-flash-lite',
   
   // コンバージョンイベント名（GA4で設定済みのもの）
   CONVERSION_EVENTS: [
@@ -791,7 +791,8 @@ function callGeminiAPI(prompt) {
       temperature: 0.8,
       maxOutputTokens: 8192,
       topP: 0.95,
-      topK: 40
+      topK: 40,
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
@@ -1148,5 +1149,29 @@ function testConnection() {
     console.log('1. Google Analytics Data API が有効になっているか');
     console.log('2. Apps Script のサービスに AnalyticsData が追加されているか');
     console.log('3. GA4プロパティへのアクセス権限があるか');
+  }
+}
+
+/**
+ * GA4_AI分析シートから「今日の日付」の行を削除する運用用関数（銀座側から移植）。
+ * APIエラー等で失敗結果がキャッシュされてしまった行を手動で消したい場合に使う。
+ */
+function clearAIAnalysisCacheForToday() {
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var sheet = getOrCreateSheet(CONFIG.SHEETS.AI_ANALYSIS);
+  if (sheet.getLastRow() < 2) {
+    console.log('削除対象なし');
+    return;
+  }
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = data.length - 1; i >= 0; i--) {
+    var cellDate = data[i][0];
+    var dateStr = (cellDate instanceof Date)
+      ? Utilities.formatDate(cellDate, 'Asia/Tokyo', 'yyyy-MM-dd')
+      : String(cellDate);
+    if (dateStr === today) {
+      sheet.deleteRow(i + 2);
+      console.log('削除: 行 ' + (i + 2));
+    }
   }
 }
