@@ -1120,6 +1120,8 @@ function fetchAIAnalysis() {
     });
 }
 
+var MD_RENDER_TIME_LIMIT_MS = 2000;
+
 // Markdown → HTML変換（見出し・箇条書き・水平線・テーブル対応）
 function renderMarkdown(md) {
   if (!md) return '';
@@ -1136,8 +1138,10 @@ function renderMarkdown(md) {
 
   var guard = 0;
   var guardMax = lines.length * 3 + 100;
+  var startedAt = Date.now();
   while (i < lines.length) {
     if (++guard > guardMax) throw new Error('renderMarkdown: 進行しないため中断');
+    if (Date.now() - startedAt > MD_RENDER_TIME_LIMIT_MS) throw new Error('renderMarkdown: 時間超過のため中断');
     var line = lines[i];
     var trimmed = line.trim();
 
