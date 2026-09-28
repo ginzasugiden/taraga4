@@ -1073,8 +1073,11 @@ function renderFunnelSummary(funnel) {
 // ============================
 // AI分析
 // ============================
+var AI_REPORT_MAX_CHARS = 50000;
+
 function fetchAIAnalysis() {
   var btn = document.getElementById('btnAI');
+  if (btn.disabled) return;
   var status = document.getElementById('aiStatus');
   var content = document.getElementById('aiContent');
 
@@ -1096,7 +1099,15 @@ function fetchAIAnalysis() {
         var timeStr = t.toLocaleString('ja-JP');
         status.textContent = '最終更新: ' + timeStr;
         status.style.color = '#888';
-        content.innerHTML = renderMarkdown(data.analysis || '');
+        var body = String(data.analysis || '');
+        if (body.length > AI_REPORT_MAX_CHARS) {
+          body = body.substring(0, AI_REPORT_MAX_CHARS) + '\n\n……（以下省略）';
+        }
+        try {
+          content.innerHTML = renderMarkdown(body);
+        } catch (renderErr) {
+          content.textContent = body;
+        }
         content.style.display = 'block';
       }
     })
@@ -1123,7 +1134,10 @@ function renderMarkdown(md) {
   var output = [];
   var i = 0;
 
+  var guard = 0;
+  var guardMax = lines.length * 3 + 100;
   while (i < lines.length) {
+    if (++guard > guardMax) throw new Error('renderMarkdown: 進行しないため中断');
     var line = lines[i];
     var trimmed = line.trim();
 
@@ -1170,6 +1184,12 @@ function renderMarkdown(md) {
     var h2 = trimmed.match(/^##\s+(.+)$/);
     if (h2) {
       output.push('<h2 class="md-h2">' + h2[1] + '</h2>');
+      i++;
+      continue;
+    }
+    var hDeep = trimmed.match(/^(#{4,6})\s+(.+)$/);
+    if (hDeep) {
+      output.push('<h4 class="md-h3">' + hDeep[2] + '</h4>');
       i++;
       continue;
     }
@@ -1238,7 +1258,7 @@ function renderMarkdown(md) {
     while (i < lines.length) {
       var pt = lines[i].trim();
       if (pt === '') { i++; break; }
-      if (/^(#{1,6}\s|[-*]\s|\d+\.\s|\|)/.test(pt) || /^-{3,}$/.test(pt)) break;
+      if (paragraphLines.length > 0 && (/^(#{1,6}\s|[-*]\s|\d+\.\s|\|)/.test(pt) || /^-{3,}$/.test(pt))) break;
       paragraphLines.push(lines[i]);
       i++;
     }
