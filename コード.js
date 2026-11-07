@@ -860,6 +860,9 @@ function doGet(e) {
       case 'funnel':
         result = getDataFunnelReport();
         break;
+      case 'funnelDiag':
+        result = getFunnelDiagnostics();
+        break;
       case 'comparison':
         result = { previousPeriod: getDataPreviousPeriodSummary() };
         break;
@@ -1155,6 +1158,81 @@ function getDataFunnelReport() {
   });
 
   return { steps: steps, dates: dates, definitions: definitions, detectedEvents: detected, rows: rows };
+}
+
+
+/**
+ * ファネル診断（読み取り専用）。/checkout/edit の来訪内訳を直近30日で集計する。
+ * ?type=funnelDiag 専用。Data API の runReport のみ使用。既存レポートには影響しない。
+ */
+function getFunnelDiagnostics() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var range = [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }];
+  function fmt(d) { return d.substring(0, 4) + '-' + d.substring(4, 6) + '-' + d.substring(6, 8); }
+  function run(dims, metrics, filter, limit) {
+    var req = { dateRanges: range, dimensions: dims.map(function(n) { return { name: n }; }),
+                metrics: metrics.map(function(n) { return { name: n }; }), limit: limit || 100000 };
+    if (filter) req.dimensionFilter = filter;
+    return AnalyticsData.Properties.runReport(req, property).rows || [];
+  }
+  function pf(field, value, type) {
+    var f = { fieldName: field }; f[type || 'stringFilter'] = { matchType: 'CONTAINS', value: value };
+    return { filter: f };
+  }
+  function and(list) { return { andGroup: { expressions: list } }; }
+  var editFilter = pf('pagePath', '/checkout/edit');
+  function evFilter(names) { return { filter: { fieldName: 'eventName', inListFilter: { values: names } } }; }
+
+  // A: /checkout/edit を見た人の内訳（ディメンション別 上位20）
+  var blockA = {};
+  ['landingPage', 'pageReferrer', 'sessionSourceMedium', 'deviceCategory', 'newVsReturning'].forEach(function(dim) {
+    var rows = run([dim], ['totalUsers', 'sessions'], editFilter).map(function(r) {
+      return { value: r.dimensionValues[0].value, users: Number(r.metricValues[0].value), sessions: Number(r.metricValues[1].value) };
+    }).sort(function(a, b) { return b.users - a.users; });
+    blockA[dim] = { label: '/checkout/edit を見た人の ' + dim + ' 別（上位20。合計は重複ユーザーを含む）', total: rows.length, rows: rows.slice(0, 20) };
+  });
+
+  // 分類用: pageReferrer 全件から /items/ 経由・それ以外を集計
+  var refClass = { itemsReferrer: 0, otherReferrer: 0, emptyReferrer: 0 };
+  var refSessions = { itemsReferrer: 0, otherReferrer: 0, emptyReferrer: 0 };
+  run(['pageReferrer'], ['totalUsers', 'sessions'], editFilter).forEach(function(r) {
+    var v = r.dimensionValues[0].value, u = Number(r.metricValues[0].value), se = Number(r.metricValues[1].value);
+    var k = (!v || v === '(not set)' || v === '(direct)') ? 'emptyReferrer' : (v.indexOf('/items/') !== -1 ? 'itemsReferrer' : 'otherReferrer');
+    refClass[k] += u; refSessions[k] += se;
+  });
+  var classification = { label: 'pageReferrer による分類（users は区分内の合算で重複を含む）', users: refClass, sessions: refSessions };
+
+  // B: 日別 add_to_cart / begin_checkout / purchase
+  var blockB = { label: '日別イベント（add_to_cart, begin_checkout, purchase）', rows: run(['date', 'eventName'], ['eventCount', 'totalUsers'],
+    evFilter(['add_to_cart', 'begin_checkout', 'purchase'])).map(function(r) {
+      return { date: fmt(r.dimensionValues[0].value), eventName: r.dimensionValues[1].value,
+               eventCount: Number(r.metricValues[0].value), users: Number(r.metricValues[1].value) };
+    }) };
+
+  // C: 日別 /checkout/edit と /items/
+  var byDate = {};
+  run(['date'], ['totalUsers', 'sessions'], editFilter).forEach(function(r) {
+    var d = fmt(r.dimensionValues[0].value);
+    byDate[d] = byDate[d] || { date: d, editUsers: 0, editSessions: 0, itemUsers: 0 };
+    byDate[d].editUsers = Number(r.metricValues[0].value); byDate[d].editSessions = Number(r.metricValues[1].value);
+  });
+  run(['date'], ['totalUsers'], { filter: { fieldName: 'pagePath', stringFilter: { matchType: 'BEGINS_WITH', value: '/items/' } } }).forEach(function(r) {
+    var d = fmt(r.dimensionValues[0].value);
+    byDate[d] = byDate[d] || { date: d, editUsers: 0, editSessions: 0, itemUsers: 0 };
+    byDate[d].itemUsers = Number(r.metricValues[0].value);
+  });
+  var blockC = { label: '日別 /checkout/edit の users・sessions と /items/ の users',
+                 rows: Object.keys(byDate).sort().map(function(k) { return byDate[k]; }) };
+
+  // D: landingPage が /checkout/edit のセッション数 vs それ以外
+  var landEdit = 0, landOther = 0;
+  run(['landingPage'], ['sessions']).forEach(function(r) {
+    var n = Number(r.metricValues[0].value);
+    if (r.dimensionValues[0].value.indexOf('/checkout/edit') !== -1) landEdit += n; else landOther += n;
+  });
+  var blockD = { label: 'サイト全体のセッションのうち landingPage が /checkout/edit のもの / それ以外', landingOnCheckoutEdit: landEdit, others: landOther };
+
+  return { A: blockA, classification: classification, B: blockB, C: blockC, D: blockD };
 }
 
 
