@@ -458,13 +458,20 @@
     <h2><span class="icon">🔻</span> ファネル日次推移</h2>
     <div class="hint">
       <strong>このグラフの見方：</strong>お客様が購入に至るまでの各ステップの通過数です。段差が大きく落ちる
-      箇所がボトルネックです。「商品ページ→カート」の落差が大きければ商品ページの訴求、
-      「カート→注文確認」の落差が大きければカート画面（送料・支払い方法・入力の手間）の改善が効果的です。
+      箇所がボトルネックです。商品閲覧→カート追加の落差が大きければ商品ページの訴求、カート追加→購入手続きの落差が大きければ送料・支払い方法などの購入条件を見直してください。
     </div>
     <div class="chart-wrap"><canvas id="chartFunnel"></canvas></div>
     <div id="funnelSummary" class="funnel-summary"></div>
-    <div class="funnel-note">※ 各数値は各ステップに進んだ人数（日別ユニークユーザー）です。
-      カートはBASEのカート画面（/checkout/edit）の閲覧人数です。購入手続き開始はGA4のbegin_checkoutイベントがある場合のみ表示します。</div>
+    <div class="funnel-note">※ 各数値は各ステップに進んだ人数（日別ユニークユーザー）です。購入のみ購入件数です。
+      BASEのカート画面（/checkout/edit）は、カートが空でも同じURLに飛ぶため、ファネルには使っていません。</div>
+  </div>
+
+  <!-- 要注意指標 -->
+  <div class="card" id="cardFunnelWarn" style="display:none;">
+    <h2><span class="icon">⚠️</span> 要注意指標：広告からカート画面に直接着地</h2>
+    <div class="hint">Google広告の着地先が空のカート画面になっている件数です。0に近づけば広告設定の修正が効いています。</div>
+    <div id="funnelWarnNumbers" class="funnel-summary"></div>
+    <div class="chart-wrap" style="height:160px;"><canvas id="chartFunnelWarn"></canvas></div>
   </div>
 
   <!-- コンバージョン -->
@@ -551,6 +558,7 @@ var chartDaily = null;
 var chartChannels = null;
 var chartConversions = null;
 var chartFunnel = null;
+var chartFunnelWarn = null;
 
 function onRefreshButtonClick() {
   trackDashboardEvent('data_refresh');
@@ -993,7 +1001,7 @@ function renderConversionsChart(data, dailyData) {
 }
 
 // ============================
-// ファネル日次推移（商品閲覧→カート→[購入手続き開始]→注文確認→購入）
+// ファネル日次推移（商品閲覧→カート追加→購入手続き開始→購入）
 // ============================
 var FUNNEL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'];
 
@@ -1044,6 +1052,25 @@ function renderFunnelChart(funnel) {
   });
 
   renderFunnelSummary(steps);
+  renderFunnelWarning(funnel);
+}
+
+// 要注意指標: 広告からカート画面に直接着地したセッション数（日別の小さな折れ線＋30日/直近7日合計）
+function renderFunnelWarning(funnel) {
+  var w = funnel.warning;
+  if (!w) return;
+  document.getElementById('cardFunnelWarn').style.display = '';
+  document.getElementById('funnelWarnNumbers').textContent =
+    '30日合計 ' + w.total30.toLocaleString() + ' セッション ／ 直近7日 ' + w.last7.toLocaleString() + ' セッション';
+  if (chartFunnelWarn) chartFunnelWarn.destroy();
+  chartFunnelWarn = new Chart(document.getElementById('chartFunnelWarn'), {
+    type: 'line',
+    data: { labels: funnel.dates.map(function(d) { return d.substring(5); }),
+            datasets: [{ label: '広告→カート画面 直接着地', data: w.daily, borderColor: '#EF4444',
+                         backgroundColor: 'rgba(239,68,68,0.15)', fill: true, tension: 0.3, pointRadius: 2, borderWidth: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+               scales: { x: { ticks: { maxRotation: 45, font: { size: 11 } } }, y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  });
 }
 
 // 期間合計（GA4側でdateなしに集計した値）の遷移行。遷移率は前段比、前段0件は「-」
