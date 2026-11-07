@@ -835,7 +835,7 @@ function callGeminiAPI(prompt) {
  * ?type=pages       → ページ別
  * ?type=channels    → 集客チャネル別
  * ?type=conversions → コンバージョン別
- * ?type=funnel      → ファネル日次推移（商品ページ→カート→購入情報入力→購入）
+ * ?type=funnel      → ファネル日次推移（商品閲覧→カート→[購入手続き開始]→注文確認→購入）
  * ?type=comparison  → 前期間（31〜60日前）のKPI合計値（前期間比較用）
  * ?type=ai_analysis → Gemini API によるAI分析（1日1回キャッシュ）
  */
@@ -1067,56 +1067,94 @@ function getDataConversionReport() {
 }
 
 /**
- * ファネル日次推移データを取得（商品ページ閲覧 → カート到達 → 購入情報入力 → 購入）。
- * 商品ページ/カート/購入情報入力の3系列は date × pagePath のPVレポートをGAS側で集約。
- * 購入は getDataDailySummary() の日次コンバージョン数（既存ロジック）をそのまま流用する。
- * 日付配列は getDataDailySummary() の rows（＝日別アクセス推移と同じ過去30日配列）を正とし、
- * データが無い日は0で埋める。
+ * ファネル日次推移データを取得（商品閲覧 → カート → [購入手続き開始] → 注文確認 → 購入）。
+ * 各ステップは「進んだ人数（ユニークユーザー）」。BASEの /checkout/edit はカート画面なので「カート」とする。
+ * begin_checkout が30日1件以上ある場合のみ「購入手続き開始」を②③の間に追加。add_to_cart は使わない。
+ * 購入は purchase イベントがあれば eventCount、なければ /orders/ パスの totalUsers。
+ * 期間合計は date ディメンションなしで別途取得（日別の単純加算はしない）。
+ * 戻り値: {steps:[{key,label,daily:[],total}], dates:[], definitions, detectedEvents, rows(旧形式の互換配列)}
  */
 function getDataFunnelReport() {
   var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
-  var request = {
-    dateRanges: [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }],
-    dimensions: [{ name: 'date' }, { name: 'pagePath' }],
-    metrics: [{ name: 'screenPageViews' }],
-    limit: 100000
-  };
+  var range = [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }];
+  var dates = getDataDailySummary().map(function(d) { return d.date; });
 
-  var response = AnalyticsData.Properties.runReport(request, property);
-
-  var byDate = {};
-  if (response.rows) {
-    response.rows.forEach(function(row) {
-      var d = row.dimensionValues[0].value;
-      var path = row.dimensionValues[1].value;
-      var pv = Number(row.metricValues[0].value);
-      var date = d.substring(0, 4) + '-' + d.substring(4, 6) + '-' + d.substring(6, 8);
-
-      if (!byDate[date]) {
-        byDate[date] = { itemPageViews: 0, cartViews: 0, checkoutEditViews: 0 };
-      }
-      if (path.indexOf('/items/') === 0) {
-        byDate[date].itemPageViews += pv;
-      } else if (path.indexOf('/checkout/bag') !== -1) {
-        byDate[date].cartViews += pv;
-      } else if (path.indexOf('/checkout/edit') !== -1) {
-        byDate[date].checkoutEditViews += pv;
-      }
-    });
+  function fmt(d) { return d.substring(0, 4) + '-' + d.substring(4, 6) + '-' + d.substring(6, 8); }
+  function run(dims, metrics, filter) {
+    var req = { dateRanges: range, dimensions: dims.map(function(n) { return { name: n }; }),
+                metrics: metrics.map(function(n) { return { name: n }; }), limit: 100000 };
+    if (filter) req.dimensionFilter = filter;
+    return AnalyticsData.Properties.runReport(req, property).rows || [];
+  }
+  function pageKey(path) {
+    if (path.indexOf('/items/') === 0) return 'item';
+    if (path.indexOf('/checkout/edit') !== -1) return 'cart';
+    if (path.indexOf('/checkout/confirm') !== -1) return 'confirm';
+    if (path.indexOf('/orders/') !== -1 && path.indexOf('/dynamic_receipts/') === -1) return 'orderPage';
+    return null;
   }
 
-  var dailyRows = getDataDailySummary();
-
-  return dailyRows.map(function(d) {
-    var f = byDate[d.date] || { itemPageViews: 0, cartViews: 0, checkoutEditViews: 0 };
-    return {
-      date: d.date,
-      itemPageViews: f.itemPageViews,
-      cartViews: f.cartViews,
-      checkoutEditViews: f.checkoutEditViews,
-      purchases: d.conversions
-    };
+  // --- ページ系: date×pagePath と 期間合計 pagePath の totalUsers ---
+  var pageDaily = {};
+  run(['date', 'pagePath'], ['totalUsers']).forEach(function(row) {
+    var dt = fmt(row.dimensionValues[0].value);
+    var k = pageKey(row.dimensionValues[1].value);
+    if (!k) return;
+    pageDaily[k] = pageDaily[k] || {};
+    pageDaily[k][dt] = (pageDaily[k][dt] || 0) + Number(row.metricValues[0].value);
   });
+  var pageTotal = { item: 0, cart: 0, confirm: 0, orderPage: 0 };
+  run(['pagePath'], ['totalUsers']).forEach(function(row) {
+    var k = pageKey(row.dimensionValues[0].value);
+    if (k) pageTotal[k] += Number(row.metricValues[0].value);
+  });
+
+  // --- イベント系: begin_checkout / purchase ---
+  var evFilter = { filter: { fieldName: 'eventName', inListFilter: { values: ['begin_checkout', 'purchase'] } } };
+  var evDaily = { begin_checkout: {}, purchase: {} };
+  var detected = { begin_checkout: 0, purchase: 0 };
+  run(['date', 'eventName'], ['totalUsers', 'eventCount'], evFilter).forEach(function(row) {
+    var dt = fmt(row.dimensionValues[0].value), name = row.dimensionValues[1].value;
+    var users = Number(row.metricValues[0].value), cnt = Number(row.metricValues[1].value);
+    detected[name] += cnt;
+    if (name === 'begin_checkout') evDaily.begin_checkout[dt] = users;
+    if (name === 'purchase') evDaily.purchase[dt] = cnt;
+  });
+  var evTotal = { begin_checkout: 0, purchase: 0 };
+  run(['eventName'], ['totalUsers', 'eventCount'], evFilter).forEach(function(row) {
+    var name = row.dimensionValues[0].value;
+    if (name === 'begin_checkout') evTotal.begin_checkout = Number(row.metricValues[0].value);
+    if (name === 'purchase') evTotal.purchase = Number(row.metricValues[1].value);
+  });
+
+  function daily(map) { return dates.map(function(d) { return (map && map[d]) || 0; }); }
+  var useBegin = detected.begin_checkout > 0;
+  var usePurchaseEvent = detected.purchase > 0;
+  var steps = [];
+  steps.push({ key: 'item', label: '商品閲覧', daily: daily(pageDaily.item), total: pageTotal.item });
+  steps.push({ key: 'cart', label: 'カート', daily: daily(pageDaily.cart), total: pageTotal.cart });
+  if (useBegin) steps.push({ key: 'begin', label: '購入手続き開始', daily: daily(evDaily.begin_checkout), total: evTotal.begin_checkout });
+  steps.push({ key: 'confirm', label: '注文確認（お客様情報入力済み）', daily: daily(pageDaily.confirm), total: pageTotal.confirm });
+  steps.push(usePurchaseEvent
+    ? { key: 'purchase', label: '購入', daily: daily(evDaily.purchase), total: evTotal.purchase }
+    : { key: 'purchase', label: '購入', daily: daily(pageDaily.orderPage), total: pageTotal.orderPage });
+
+  var definitions = [
+    '商品閲覧: pagePathが/items/で始まる totalUsers',
+    'カート: pagePathに/checkout/editを含む totalUsers（BASEのカート画面）',
+    useBegin ? '購入手続き開始: eventName=begin_checkout の totalUsers' : '購入手続き開始: begin_checkoutが30日0件のため省略',
+    '注文確認: pagePathに/checkout/confirmを含む totalUsers',
+    usePurchaseEvent ? '購入: eventName=purchase の eventCount' : '購入: pagePathに/orders/を含む(/dynamic_receipts/除外) totalUsers',
+    '期間合計はdateなしで別取得（日別の単純加算ではない）'
+  ].join(' / ');
+
+  // 旧形式(PV版)の互換配列。checkoutEditViewsは旧キー名のまま、カート画面の人数を入れる
+  var rows = dates.map(function(d, i) {
+    var by = {}; steps.forEach(function(st) { by[st.key] = st.daily[i]; });
+    return { date: d, itemPageViews: by.item, cartViews: by.cart, checkoutEditViews: by.confirm, purchases: by.purchase };
+  });
+
+  return { steps: steps, dates: dates, definitions: definitions, detectedEvents: detected, rows: rows };
 }
 
 

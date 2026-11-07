@@ -2,3 +2,5 @@ docs/**
 *.md
 *.ps1
 .git/**
+tmp/**
+**/node_modules/**

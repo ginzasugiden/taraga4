@@ -458,14 +458,13 @@
     <h2><span class="icon">🔻</span> ファネル日次推移</h2>
     <div class="hint">
       <strong>このグラフの見方：</strong>お客様が購入に至るまでの各ステップの通過数です。段差が大きく落ちる
-      箇所がボトルネックです。「商品ページ→カート」の落差が大きければ商品
-      ページの訴求、「カート→購入」の落差が大きければ購入手続きの改善が
-      効果的です。
+      箇所がボトルネックです。「商品ページ→カート」の落差が大きければ商品ページの訴求、
+      「カート→注文確認」の落差が大きければカート画面（送料・支払い方法・入力の手間）の改善が効果的です。
     </div>
     <div class="chart-wrap"><canvas id="chartFunnel"></canvas></div>
     <div id="funnelSummary" class="funnel-summary"></div>
-    <div class="funnel-note">※ 各数値はページ閲覧数ベースの目安です。同じページを複数回見た場合も
-      カウントされるため、遷移率が100%を超えることがあります。</div>
+    <div class="funnel-note">※ 各数値は各ステップに進んだ人数（日別ユニークユーザー）です。
+      カートはBASEのカート画面（/checkout/edit）の閲覧人数です。購入手続き開始はGA4のbegin_checkoutイベントがある場合のみ表示します。</div>
   </div>
 
   <!-- コンバージョン -->
@@ -994,67 +993,43 @@ function renderConversionsChart(data, dailyData) {
 }
 
 // ============================
-// ファネル日次推移（商品ページ→カート→購入情報入力→購入）
+// ファネル日次推移（商品閲覧→カート→[購入手続き開始]→注文確認→購入）
 // ============================
+var FUNNEL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'];
+
 function renderFunnelChart(funnel) {
-  if (!funnel || !funnel.length) return;
+  if (!funnel || !funnel.steps || !funnel.steps.length) return;
   document.getElementById('cardFunnel').style.display = '';
 
-  var shortDates = funnel.map(function(d) { return d.date.substring(5); });
+  var steps = funnel.steps;
+  var shortDates = funnel.dates.map(function(d) { return d.substring(5); });
+  var itemStep = steps[0];
+  var lastIdx = steps.length - 1;
+
+  var datasets = steps.map(function(st, i) {
+    var isItem = i === 0;
+    var color = FUNNEL_COLORS[i % FUNNEL_COLORS.length];
+    return {
+      label: st.label + (isItem ? '（右軸）' : ''),
+      data: st.daily,
+      borderColor: color,
+      backgroundColor: color + '26',
+      borderDash: isItem ? [6, 4] : [],
+      fill: false,
+      tension: 0.3,
+      pointRadius: i === lastIdx ? 3 : 2,
+      borderWidth: i === lastIdx ? 3 : 2,
+      yAxisID: isItem ? 'yItems' : 'yFunnel'
+    };
+  });
+
+  var leftMax = 0;
+  steps.slice(1).forEach(function(st) { st.daily.forEach(function(v) { leftMax = Math.max(leftMax, v); }); });
 
   if (chartFunnel) chartFunnel.destroy();
   chartFunnel = new Chart(document.getElementById('chartFunnel'), {
     type: 'line',
-    data: {
-      labels: shortDates,
-      datasets: [
-        {
-          label: '商品ページ閲覧（右軸）',
-          data: funnel.map(function(d) { return d.itemPageViews; }),
-          borderColor: '#3B82F6',
-          backgroundColor: 'rgba(59,130,246,0.15)',
-          borderDash: [6, 4],
-          fill: false,
-          tension: 0.3,
-          pointRadius: 2,
-          borderWidth: 2,
-          yAxisID: 'yItems'
-        },
-        {
-          label: 'カート到達',
-          data: funnel.map(function(d) { return d.cartViews; }),
-          borderColor: '#10B981',
-          backgroundColor: 'rgba(16,185,129,0.15)',
-          fill: false,
-          tension: 0.3,
-          pointRadius: 2,
-          borderWidth: 2,
-          yAxisID: 'yFunnel'
-        },
-        {
-          label: '購入情報入力',
-          data: funnel.map(function(d) { return d.checkoutEditViews; }),
-          borderColor: '#F59E0B',
-          backgroundColor: 'rgba(245,158,11,0.15)',
-          fill: false,
-          tension: 0.3,
-          pointRadius: 2,
-          borderWidth: 2,
-          yAxisID: 'yFunnel'
-        },
-        {
-          label: '購入',
-          data: funnel.map(function(d) { return d.purchases; }),
-          borderColor: '#EF4444',
-          backgroundColor: 'rgba(239,68,68,0.15)',
-          fill: false,
-          tension: 0.3,
-          pointRadius: 3,
-          borderWidth: 3,
-          yAxisID: 'yFunnel'
-        }
-      ]
-    },
+    data: { labels: shortDates, datasets: datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -1062,55 +1037,25 @@ function renderFunnelChart(funnel) {
       plugins: { legend: { position: 'top' } },
       scales: {
         x: { ticks: { maxRotation: 45, font: { size: 11 } } },
-        yFunnel: {
-          type: 'linear',
-          position: 'left',
-          beginAtZero: true,
-          suggestedMax: funnelAxisMax(funnel),
-          ticks: { precision: 0, stepSize: 1 }
-        },
-        yItems: {
-          type: 'linear',
-          position: 'right',
-          beginAtZero: true,
-          grid: { drawOnChartArea: false }
-        }
+        yFunnel: { type: 'linear', position: 'left', beginAtZero: true, suggestedMax: leftMax + 1, ticks: { precision: 0, stepSize: 1 } },
+        yItems: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }
       }
     }
   });
 
-  renderFunnelSummary(funnel);
+  renderFunnelSummary(steps);
 }
 
-// 左軸（カート・情報入力・購入）の上限。3系列の最大値+1にして0.x刻みを防ぐ
-function funnelAxisMax(funnel) {
-  var max = 0;
-  funnel.forEach(function(d) {
-    max = Math.max(max, d.cartViews, d.checkoutEditViews, d.purchases);
-  });
-  return max + 1;
-}
-
-// 直近30日合計のファネルサマリー行（前段からの遷移率つき。前段0件の場合は「-」）
-function renderFunnelSummary(funnel) {
-  var totals = funnel.reduce(function(acc, d) {
-    acc.item += d.itemPageViews;
-    acc.cart += d.cartViews;
-    acc.edit += d.checkoutEditViews;
-    acc.purchase += d.purchases;
-    return acc;
-  }, { item: 0, cart: 0, edit: 0, purchase: 0 });
-
+// 期間合計（GA4側でdateなしに集計した値）の遷移行。遷移率は前段比、前段0件は「-」
+function renderFunnelSummary(steps) {
   function rate(curr, prev) {
     return prev > 0 ? (curr / prev * 100).toFixed(1) + '%' : '-';
   }
-
-  var summary = '商品ページ ' + totals.item.toLocaleString() +
-    ' → カート ' + totals.cart.toLocaleString() + '（' + rate(totals.cart, totals.item) + '）' +
-    ' → 情報入力 ' + totals.edit.toLocaleString() + '（' + rate(totals.edit, totals.cart) + '）' +
-    ' → 購入 ' + totals.purchase.toLocaleString() + '（' + rate(totals.purchase, totals.edit) + '）';
-
-  document.getElementById('funnelSummary').textContent = summary;
+  var parts = steps.map(function(st, i) {
+    var t = st.total.toLocaleString();
+    return i === 0 ? st.label + ' ' + t : st.label + ' ' + t + '（' + rate(st.total, steps[i - 1].total) + '）';
+  });
+  document.getElementById('funnelSummary').textContent = parts.join(' → ');
 }
 
 // ============================
