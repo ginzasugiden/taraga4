@@ -710,11 +710,30 @@ function renderDailyChart(data) {
 // ============================
 // 集客チャネル円グラフ
 // ============================
-var CHANNEL_COLORS = [
-  '#6b5b47','#a89683','#c4a99a','#8b7355','#b8a283',
-  '#9c8b6e','#d4c5b3','#7a6855','#ada190','#5d4e3c',
-  '#e8e0d2','#bfae93','#3d342a','#857058'
-];
+// チャネル（英語キー）ごとに色を固定。並び順が変わっても同じチャネルは同じ色
+var CHANNEL_COLOR_MAP = {
+  'Paid Social':     '#3B82F6', // 青
+  'Paid Search':     '#F59E0B', // オレンジ
+  'Organic Social':  '#10B981', // 緑
+  'Direct':          '#EF4444', // 赤
+  'Organic Search':  '#8B5CF6', // 紫
+  'Referral':        '#06B6D4', // シアン
+  'Cross-network':   '#EC4899', // ピンク
+  'Organic Shopping':'#84CC16', // ライム
+  'Organic Video':   '#A16207', // こげ茶
+  'Email':           '#0EA5E9',
+  'Display':         '#F97316',
+  'Paid Video':      '#14B8A6',
+  'Paid Shopping':   '#D946EF',
+  'Affiliates':      '#65A30D',
+  'Unassigned':      '#9CA3AF', // グレー
+  '(not set)':       '#CBD5E1'
+};
+var CHANNEL_FALLBACK_COLORS = ['#1E3A8A','#BE123C','#047857','#7C3AED','#B45309','#0F766E'];
+
+function channelColor(key, i) {
+  return CHANNEL_COLOR_MAP[key] || CHANNEL_FALLBACK_COLORS[i % CHANNEL_FALLBACK_COLORS.length];
+}
 
 var CHANNEL_NAME_MAP = {
   'Direct': '直接アクセス',
@@ -753,7 +772,12 @@ function renderChannelsChart(data) {
   data.forEach(function(d) {
     map[d.channel] = (map[d.channel] || 0) + d.sessions;
   });
-  var entries = Object.entries(map).sort(function(a, b) { return b[1] - a[1]; });
+  // セッション降順。未分類・(not set) は末尾
+  var isTail = function(k) { return k === 'Unassigned' || k === '(not set)'; };
+  var entries = Object.entries(map).sort(function(a, b) {
+    if (isTail(a[0]) !== isTail(b[0])) return isTail(a[0]) ? 1 : -1;
+    return b[1] - a[1];
+  });
   var labels = entries.map(function(e) { return translateChannel(e[0]); });
   var values = entries.map(function(e) { return e[1]; });
 
@@ -764,7 +788,7 @@ function renderChannelsChart(data) {
       labels: labels,
       datasets: [{
         data: values,
-        backgroundColor: CHANNEL_COLORS.slice(0, labels.length),
+        backgroundColor: entries.map(function(e, i) { return channelColor(e[0], i); }),
         borderWidth: 2,
         borderColor: '#fff'
       }]
@@ -773,7 +797,22 @@ function renderChannelsChart(data) {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: { position: 'bottom', labels: { font: { size: 12 } } },
+        legend: {
+          position: 'bottom',
+          labels: {
+            font: { size: 12 },
+            generateLabels: function(chart) {
+              var base = Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chart);
+              var ds = chart.data.datasets[0].data;
+              var total = ds.reduce(function(a, b) { return a + b; }, 0);
+              return base.map(function(item) {
+                var v = ds[item.index] || 0;
+                item.text = item.text + ' ' + (total ? (v / total * 100).toFixed(1) : '0.0') + '%';
+                return item;
+              });
+            }
+          }
+        },
         tooltip: {
           callbacks: {
             label: function(ctx) {
