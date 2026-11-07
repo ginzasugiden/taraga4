@@ -668,29 +668,33 @@ function renderDailyChart(data) {
         {
           label: 'ユーザー数',
           data: data.map(function(d) { return d.users; }),
-          borderColor: '#6b5b47',
-          backgroundColor: 'rgba(107,91,71,0.08)',
-          fill: true,
+          borderColor: '#3B82F6', // 青
+          backgroundColor: '#3B82F6',
+          borderWidth: 2.5,
+          fill: false,
           tension: 0.3,
-          pointRadius: 2
+          pointRadius: 2.5
         },
         {
           label: 'セッション数',
           data: data.map(function(d) { return d.sessions; }),
-          borderColor: '#a89683',
-          backgroundColor: 'rgba(168,150,131,0.08)',
-          fill: true,
+          borderColor: '#10B981', // 緑（ユーザー数と重なりやすいので破線）
+          backgroundColor: '#10B981',
+          borderWidth: 2.5,
+          borderDash: [6, 4],
+          fill: false,
           tension: 0.3,
-          pointRadius: 2
+          pointRadius: 2.5
         },
         {
           label: 'PV',
           data: data.map(function(d) { return d.pageviews; }),
-          borderColor: '#c4a99a',
-          backgroundColor: 'rgba(196,169,154,0.08)',
-          fill: true,
+          borderColor: '#F59E0B', // オレンジ
+          backgroundColor: '#F59E0B',
+          borderWidth: 2.5,
+          fill: false,
           tension: 0.3,
-          pointRadius: 2
+          pointRadius: 2.5
         }
       ]
     },
