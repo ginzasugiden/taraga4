@@ -838,6 +838,7 @@ function callGeminiAPI(prompt) {
  * ?type=funnel      → ファネル日次推移（商品閲覧→カート追加→購入手続き開始→購入）
  * ?type=channelFunnel → 流入チャネル別の商品閲覧→カート追加率（診断・読み取り専用）
  * ?type=itemFunnel  → 商品別の閲覧ユーザー数・add_to_cart・平均エンゲージメント時間（診断・読み取り専用）
+ * ?type=adBreakdown → 広告流入（cpc / paid）のキャンペーン×着地ページ・utm_content・デバイス別分解（診断・読み取り専用）
  * ?type=comparison  → 前期間（31〜60日前）のKPI合計値（前期間比較用）
  * ?type=ai_analysis → Gemini API によるAI分析（1日1回キャッシュ）
  */
@@ -870,6 +871,9 @@ function doGet(e) {
         break;
       case 'itemFunnel':
         result = getItemFunnel();
+        break;
+      case 'adBreakdown':
+        result = getAdBreakdown();
         break;
       case 'comparison':
         result = { previousPeriod: getDataPreviousPeriodSummary() };
@@ -1392,6 +1396,88 @@ function getItemFunnel() {
 
   return { period: { startDate: range[0].startDate, endDate: range[0].endDate }, rows: rows,
            addToCart: { unattributed: unattributed, raw: cartRaw, items: cartItems }, definitions: definitions };
+}
+
+
+/**
+ * 広告流入の分解診断（読み取り専用）。直近30日の期間合計（date ディメンションなし）。
+ * ?type=adBreakdown 専用。Data API の runReport のみ使用。既存レポートには影響しない。
+ * 対象: sessionMedium が cpc または paid のセッション。
+ * 戻り値: {period, bySourceMedium, byCampaignLanding, byAdContent, byDevice, definitions}
+ *   各ブロックは {rows:[...]}（取得失敗時は {error}）。rows はセッション数の多い順。
+ */
+function getAdBreakdown() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var range = [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }];
+  function run(dims, metrics, filter) {
+    var req = { dateRanges: range, dimensions: dims.map(function(n) { return { name: n }; }),
+                metrics: metrics.map(function(n) { return { name: n }; }), limit: 100000 };
+    if (filter) req.dimensionFilter = filter;
+    return AnalyticsData.Properties.runReport(req, property).rows || [];
+  }
+  var adFilter = { filter: { fieldName: 'sessionMedium', inListFilter: { values: ['cpc', 'paid'] } } };
+  var adEvFilter = { andGroup: { expressions: [
+    adFilter,
+    { filter: { fieldName: 'eventName', inListFilter: { values: ['add_to_cart', 'purchase'] } } }
+  ] } };
+
+  // dims = [{ name: GA4ディメンション名, key: 出力キー }]。セッション系指標とイベント2種を集計して行にまとめる
+  function collect(dims) {
+    try {
+      var names = dims.map(function(d) { return d.name; });
+      var map = {};
+      function entry(row) {
+        var vals = (row.dimensionValues || []).slice(0, dims.length).map(function(v) { return v.value; });
+        var k = vals.join('\u0001');
+        if (!map[k]) {
+          map[k] = {};
+          dims.forEach(function(d, i) { map[k][d.key] = vals[i]; });
+          map[k].sessions = 0; map[k].users = 0; map[k].engagedSessions = 0; map[k].engagementRate = 0;
+          map[k].avgSessionDuration = 0; map[k].addToCartUsers = 0; map[k].purchases = 0;
+        }
+        return map[k];
+      }
+      run(names, ['sessions', 'totalUsers', 'engagedSessions', 'engagementRate', 'averageSessionDuration'], adFilter).forEach(function(row) {
+        var en = entry(row), m = row.metricValues;
+        en.sessions = Number(m[0].value);
+        en.users = Number(m[1].value);
+        en.engagedSessions = Number(m[2].value);
+        en.engagementRate = Number((Number(m[3].value) * 100).toFixed(1));
+        en.avgSessionDuration = Number(Number(m[4].value).toFixed(1));
+      });
+      run(names.concat(['eventName']), ['totalUsers', 'eventCount'], adEvFilter).forEach(function(row) {
+        var name = row.dimensionValues[dims.length].value, en = entry(row);
+        if (name === 'add_to_cart') en.addToCartUsers = Number(row.metricValues[0].value);
+        else if (name === 'purchase') en.purchases = Number(row.metricValues[1].value);
+      });
+      var rows = Object.keys(map).map(function(k) { return map[k]; }).sort(function(a, b) { return b.sessions - a.sessions; });
+      return { rows: rows };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
+  var sm = { name: 'sessionSourceMedium', key: 'sourceMedium' };
+  var definitions = [
+    '期間: 直近' + CONFIG.DATE_RANGE_DAYS + '日の期間合計（dateなし）',
+    '対象: sessionMedium が cpc または paid のセッション',
+    'bySourceMedium: sessionSourceMedium 単位（照合用）',
+    'byCampaignLanding: sessionSourceMedium × sessionCampaignName × landingPage',
+    'byAdContent: sessionSourceMedium × sessionManualAdContent（utm_content）',
+    'byDevice: sessionSourceMedium × deviceCategory',
+    'users: totalUsers / engagementRate: %（engagedSessions÷sessions） / avgSessionDuration: averageSessionDuration（秒）',
+    'addToCartUsers: eventName=add_to_cart の totalUsers / purchases: eventName=purchase の eventCount',
+    'users・addToCartUsers は行ごとの値で、行をまたいだ合算は重複を含む'
+  ].join(' / ');
+
+  return {
+    period: { startDate: range[0].startDate, endDate: range[0].endDate },
+    bySourceMedium: collect([sm]),
+    byCampaignLanding: collect([sm, { name: 'sessionCampaignName', key: 'campaign' }, { name: 'landingPage', key: 'landingPage' }]),
+    byAdContent: collect([sm, { name: 'sessionManualAdContent', key: 'adContent' }]),
+    byDevice: collect([sm, { name: 'deviceCategory', key: 'device' }]),
+    definitions: definitions
+  };
 }
 
 
