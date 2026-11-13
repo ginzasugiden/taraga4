@@ -836,6 +836,8 @@ function callGeminiAPI(prompt) {
  * ?type=channels    → 集客チャネル別
  * ?type=conversions → コンバージョン別
  * ?type=funnel      → ファネル日次推移（商品閲覧→カート追加→購入手続き開始→購入）
+ * ?type=channelFunnel → 流入チャネル別の商品閲覧→カート追加率（診断・読み取り専用）
+ * ?type=itemFunnel  → 商品別の閲覧ユーザー数・add_to_cart・平均エンゲージメント時間（診断・読み取り専用）
  * ?type=comparison  → 前期間（31〜60日前）のKPI合計値（前期間比較用）
  * ?type=ai_analysis → Gemini API によるAI分析（1日1回キャッシュ）
  */
@@ -862,6 +864,12 @@ function doGet(e) {
         break;
       case 'funnelDiag':
         result = getFunnelDiagnostics();
+        break;
+      case 'channelFunnel':
+        result = getChannelFunnel();
+        break;
+      case 'itemFunnel':
+        result = getItemFunnel();
         break;
       case 'comparison':
         result = { previousPeriod: getDataPreviousPeriodSummary() };
@@ -1223,6 +1231,167 @@ function getFunnelDiagnostics() {
   var blockD = { label: 'サイト全体のセッションのうち landingPage が /checkout/edit のもの / それ以外', landingOnCheckoutEdit: landEdit, others: landOther };
 
   return { A: blockA, classification: classification, B: blockB, C: blockC, D: blockD };
+}
+
+
+/**
+ * 流入チャネル別ファネル診断（読み取り専用）。直近30日の期間合計（date ディメンションなし）。
+ * ?type=channelFunnel 専用。Data API の runReport のみ使用。既存レポートには影響しない。
+ * 各行: 商品閲覧(/items/ の totalUsers) / add_to_cart・begin_checkout の totalUsers / purchase の eventCount / カート追加率。
+ * 戻り値: {period, byChannel:[], rows:[], totals, definitions}
+ *   byChannel = sessionDefaultChannelGroup 単位、rows = チャネル × sessionSourceMedium 単位。
+ */
+function getChannelFunnel() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var range = [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }];
+  function run(dims, metrics, filter) {
+    var req = { dateRanges: range, dimensions: dims.map(function(n) { return { name: n }; }),
+                metrics: metrics.map(function(n) { return { name: n }; }), limit: 100000 };
+    if (filter) req.dimensionFilter = filter;
+    return AnalyticsData.Properties.runReport(req, property).rows || [];
+  }
+  var itemFilter = { filter: { fieldName: 'pagePath', stringFilter: { matchType: 'BEGINS_WITH', value: '/items/' } } };
+  var evFilter = { filter: { fieldName: 'eventName', inListFilter: { values: ['add_to_cart', 'begin_checkout', 'purchase'] } } };
+  function rate(cart, item) { return item > 0 ? Number((cart / item * 100).toFixed(2)) : null; }
+
+  // dims（チャネル系ディメンション）ごとに 商品閲覧 と イベント3種 を集計して行にまとめる
+  function collect(dims) {
+    var map = {};
+    function entry(row) {
+      var vals = (row.dimensionValues || []).slice(0, dims.length).map(function(v) { return v.value; });
+      var k = vals.join('\u0001');
+      if (!map[k]) {
+        map[k] = { itemViewUsers: 0, addToCartUsers: 0, beginCheckoutUsers: 0, purchases: 0 };
+        if (dims.length) { map[k].channel = vals[0]; if (dims.length > 1) map[k].sourceMedium = vals[1]; }
+      }
+      return map[k];
+    }
+    run(dims, ['totalUsers'], itemFilter).forEach(function(row) {
+      entry(row).itemViewUsers = Number(row.metricValues[0].value);
+    });
+    run(dims.concat(['eventName']), ['totalUsers', 'eventCount'], evFilter).forEach(function(row) {
+      var name = row.dimensionValues[dims.length].value, en = entry(row);
+      if (name === 'add_to_cart') en.addToCartUsers = Number(row.metricValues[0].value);
+      else if (name === 'begin_checkout') en.beginCheckoutUsers = Number(row.metricValues[0].value);
+      else if (name === 'purchase') en.purchases = Number(row.metricValues[1].value);
+    });
+    return Object.keys(map).map(function(k) {
+      var en = map[k];
+      return { channel: en.channel, sourceMedium: en.sourceMedium, itemViewUsers: en.itemViewUsers, addToCartUsers: en.addToCartUsers,
+               beginCheckoutUsers: en.beginCheckoutUsers, purchases: en.purchases, cartRate: rate(en.addToCartUsers, en.itemViewUsers) };
+    }).sort(function(a, b) { return b.itemViewUsers - a.itemViewUsers; });
+  }
+  function sum(list, key) { return list.reduce(function(a, r) { return a + r[key]; }, 0); }
+
+  var byChannel = collect(['sessionDefaultChannelGroup']);
+  var rows = collect(['sessionDefaultChannelGroup', 'sessionSourceMedium']);
+  var overall = collect([])[0] || { itemViewUsers: 0, addToCartUsers: 0, beginCheckoutUsers: 0, purchases: 0, cartRate: null };
+
+  // 照合用: 既存ファネル(?type=funnel)と同じ算出方法（pagePath 別 totalUsers の合算）
+  var funnelItemTotal = 0;
+  run(['pagePath'], ['totalUsers'], itemFilter).forEach(function(row) { funnelItemTotal += Number(row.metricValues[0].value); });
+
+  var totals = {
+    unique: { itemViewUsers: overall.itemViewUsers, addToCartUsers: overall.addToCartUsers, beginCheckoutUsers: overall.beginCheckoutUsers,
+              purchases: overall.purchases, cartRate: overall.cartRate },
+    channelSum: { itemViewUsers: sum(byChannel, 'itemViewUsers'), addToCartUsers: sum(byChannel, 'addToCartUsers'),
+                  beginCheckoutUsers: sum(byChannel, 'beginCheckoutUsers'), purchases: sum(byChannel, 'purchases') },
+    funnelItemViewTotal: funnelItemTotal
+  };
+
+  var definitions = [
+    '期間: 直近' + CONFIG.DATE_RANGE_DAYS + '日の期間合計（dateなし）',
+    'itemViewUsers: pagePathが/items/で始まる totalUsers',
+    'addToCartUsers: eventName=add_to_cart の totalUsers',
+    'beginCheckoutUsers: eventName=begin_checkout の totalUsers',
+    'purchases: eventName=purchase の eventCount',
+    'cartRate: addToCartUsers÷itemViewUsers×100(%)。itemViewUsers=0 は null',
+    'totals.unique: ディメンションなしの重複なし値 / totals.channelSum: byChannel の単純合算（複数チャネルで来訪したユーザーは重複）',
+    'totals.funnelItemViewTotal: 既存ファネルと同じ pagePath 別 totalUsers の合算（複数商品を見たユーザーは重複）'
+  ].join(' / ');
+
+  return { period: { startDate: range[0].startDate, endDate: range[0].endDate }, byChannel: byChannel, rows: rows, totals: totals, definitions: definitions };
+}
+
+
+/**
+ * 商品別ファネル診断（読み取り専用）。直近30日の期間合計。pagePath が /items/ で始まるページ単位。
+ * ?type=itemFunnel 専用。Data API の runReport のみ使用。既存レポートには影響しない。
+ * 戻り値: {period, rows:[{pagePath,pageTitle,viewUsers,pageviews,addToCartItems,addToCartUsers,addToCartCount,avgEngagementTime,cartRate}], addToCart, definitions}
+ */
+function getItemFunnel() {
+  var property = 'properties/' + CONFIG.GA4_PROPERTY_ID;
+  var range = [{ startDate: CONFIG.DATE_RANGE_DAYS + 'daysAgo', endDate: 'yesterday' }];
+  function run(dims, metrics, filter) {
+    var req = { dateRanges: range, dimensions: dims.map(function(n) { return { name: n }; }),
+                metrics: metrics.map(function(n) { return { name: n }; }), limit: 100000 };
+    if (filter) req.dimensionFilter = filter;
+    return AnalyticsData.Properties.runReport(req, property).rows || [];
+  }
+  var itemFilter = { filter: { fieldName: 'pagePath', stringFilter: { matchType: 'BEGINS_WITH', value: '/items/' } } };
+  var cartFilter = { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'add_to_cart' } } };
+
+  // ページタイトル: pagePath ごとに PV が最大のタイトルを採用
+  var titles = {};
+  run(['pagePath', 'pageTitle'], ['screenPageViews'], itemFilter).forEach(function(row) {
+    var p = row.dimensionValues[0].value, pv = Number(row.metricValues[0].value);
+    if (!titles[p] || pv > titles[p].pv) titles[p] = { title: row.dimensionValues[1].value, pv: pv };
+  });
+
+  // add_to_cart の商品への紐付け: 発生ページが /items/ ならそのページ、そうでなければ pageReferrer 内の /items/… に寄せる
+  var cart = {}, cartRaw = [], unattributed = { users: 0, count: 0 };
+  run(['pagePath', 'pageReferrer'], ['totalUsers', 'eventCount'], cartFilter).forEach(function(row) {
+    var p = row.dimensionValues[0].value, ref = row.dimensionValues[1].value;
+    var u = Number(row.metricValues[0].value), n = Number(row.metricValues[1].value);
+    cartRaw.push({ pagePath: p, pageReferrer: ref, users: u, count: n });
+    var m = ref.match(/\/items\/[^?#]+/);
+    var key = p.indexOf('/items/') === 0 ? p : (m ? m[0] : null);
+    var target = key ? (cart[key] = cart[key] || { users: 0, count: 0 }) : unattributed;
+    target.users += u; target.count += n;
+  });
+
+  // 参考: eコマースの商品情報（itemId / itemName）が送られていれば商品別のカート追加点数
+  var cartItems;
+  try {
+    cartItems = run(['itemId', 'itemName'], ['itemsAddedToCart']).map(function(row) {
+      return { itemId: row.dimensionValues[0].value, itemName: row.dimensionValues[1].value, itemsAddedToCart: Number(row.metricValues[0].value) };
+    }).filter(function(r) { return r.itemsAddedToCart > 0; });
+  } catch (err) {
+    cartItems = { error: err.message };
+  }
+  // BASE は add_to_cart をカート画面(/checkout/edit)で送るため、商品別の集計は itemId で /items/{id} に突合する
+  var cartById = {};
+  if (Array.isArray(cartItems)) cartItems.forEach(function(r) { cartById[r.itemId] = (cartById[r.itemId] || 0) + r.itemsAddedToCart; });
+
+  var rows = run(['pagePath'], ['totalUsers', 'activeUsers', 'screenPageViews', 'userEngagementDuration'], itemFilter).map(function(row) {
+    var p = row.dimensionValues[0].value, m = row.metricValues;
+    var users = Number(m[0].value), active = Number(m[1].value), c = cart[p] || { users: 0, count: 0 };
+    var added = cartById[p.replace('/items/', '')] || 0;
+    return {
+      pagePath: p,
+      pageTitle: titles[p] ? titles[p].title : '',
+      viewUsers: users,
+      pageviews: Number(m[2].value),
+      addToCartItems: added,
+      addToCartUsers: c.users,
+      addToCartCount: c.count,
+      avgEngagementTime: active > 0 ? Number((Number(m[3].value) / active).toFixed(1)) : 0,
+      cartRate: users > 0 ? Number((added / users * 100).toFixed(2)) : null
+    };
+  }).sort(function(a, b) { return b.viewUsers - a.viewUsers; });
+
+  var definitions = [
+    '期間: 直近' + CONFIG.DATE_RANGE_DAYS + '日の期間合計（dateなし）',
+    'viewUsers: pagePath(/items/で始まる)ごとの totalUsers',
+    'addToCartItems: itemId が /items/{id} と一致する itemsAddedToCart（カート追加点数。ユーザー数ではない）',
+    'addToCartUsers / addToCartCount: eventName=add_to_cart の totalUsers / eventCount。発生ページが/items/ならそのページ、それ以外は pageReferrer 内の/items/…に紐付け（BASE はカート画面で送信するため通常 0）',
+    'avgEngagementTime: userEngagementDuration÷activeUsers（秒）',
+    'cartRate: addToCartItems÷viewUsers×100(%)',
+    'addToCart.unattributed: どの商品ページにも紐付けできなかった add_to_cart / addToCart.raw: pagePath×pageReferrer の内訳 / addToCart.items: itemId×itemName 別の itemsAddedToCart'
+  ].join(' / ');
+
+  return { period: { startDate: range[0].startDate, endDate: range[0].endDate }, rows: rows,
+           addToCart: { unattributed: unattributed, raw: cartRaw, items: cartItems }, definitions: definitions };
 }
 
 
